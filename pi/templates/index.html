@@ -136,7 +136,8 @@
         {% for cam in cameras %}
         <div class="camera-card" id="cam-{{ cam.id }}">
             <div class="video-container">
-                <img src="/video_feed/{{ cam.id }}" id="img-{{ cam.id }}">
+                <img src="/video_feed/{{ cam.id }}" id="img-{{ cam.id }}" 
+                     onerror="this.style.opacity='0'" onload="this.style.opacity='1'">
             </div>
             <div class="card-info">
                 <div class="info-top">
@@ -197,11 +198,13 @@
     </div>
 
     <script>
-        let alarmStates = {};
-        const API_KEY = "{{ API_KEY }}"; // We'll need to pass this or define locally
+        const alarmStates = {};
+        const API_KEY = "{{ API_KEY }}";
 
         function openDirect(ip) {
-            window.open(`http://${ip}/stream?auth=nono_safety_sec_2026`, '_blank');
+            if (!ip) return;
+            const url = `http://${ip}/stream?auth=nono_safety_sec_2026`;
+            window.open(url, '_blank');
         }
 
         async function toggleAlarm(id) {
@@ -226,11 +229,10 @@
                     const stateLabel = document.getElementById('alarm-state-' + cam.id);
                     const directLink = document.getElementById('direct-' + cam.id);
                     
-                    if (!tcpStatus || !latencyVal) return; // Skip if card not fully rendered
+                    if (!tcpStatus || !latencyVal) return;
 
                     alarmStates[cam.id] = cam.alarm;
                     
-                    // Update Direct Link URL if IP exists
                     if (directLink && cam.ip) {
                         directLink.onclick = () => openDirect(cam.ip);
                     }
