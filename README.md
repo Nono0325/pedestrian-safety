@@ -93,3 +93,15 @@ curl -sSL https://raw.githubusercontent.com/Nono0325/pedestrian-safety/main/inst
 - **團隊名稱**: nono-pi-4g
 - **開發者 ID**: 50915133
 - **競賽時間**: 2026年4月
+
+---
+
+## 🛡️ 安全維護 (Security)
+
+本專案已實作基礎資安防護機制，包含憑證分離與 API 權仗驗證：
+
+1.  **憑證分離**：Wi-Fi 與 API 金鑰儲存於 `esp32/secrets.h`，此檔案已被列入 `.gitignore`，請勿上傳至公開倉庫。
+2.  **API 驗證**：所有對 ESP32-CAM 的 HTTP 請求必須附帶 `auth` 參數。
+    *   範例：`http://{IP}/stream?auth={YOUR_API_KEY}`
+3.  **金鑰更換**：若需更換金鑰，請同步修改 `esp32/secrets.h` 與 `pi/config.json` 中的 `api_key` 欄位。
+4.  **CORS 限制**：儀表板後端已限制僅允許本地端存取，若需遠端監控建議搭配 VPN 或 SSH Tunnel。

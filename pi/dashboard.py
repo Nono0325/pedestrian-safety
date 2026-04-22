@@ -22,12 +22,14 @@ def load_config():
         return json.load(f)
 
 config = load_config()
+API_KEY = config.get("security", {}).get("api_key", "")
+
 app = FastAPI(title="先行一步 AI 監控儀表板")
 
-# Add CORS Middleware to prevent fetch errors
+# Tighten CORS: Allow local network and the server itself
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -81,8 +83,8 @@ def start_mdns_discovery():
 # BACKGROUND TASKS
 # ===================
 async def fetch_camera_data(cam_id: int, ip: str):
-    stream_url = f"http://{ip}/stream"
-    status_url = f"http://{ip}/status"
+    stream_url = f"http://{ip}/stream?auth={API_KEY}"
+    status_url = f"http://{ip}/status?auth={API_KEY}"
     
     async def poll_status():
         async with httpx.AsyncClient() as client:
@@ -175,7 +177,7 @@ async def scan_devices():
 async def control_led(cam_id: int, state: str):
     cam = next((c for c in config["cameras"] if c["id"] == cam_id), None)
     if not cam: return {"status": "error"}
-    target_url = f"http://{cam['ip']}/alarm?state={state}"
+    target_url = f"http://{cam['ip']}/alarm?state={state}&auth={API_KEY}"
     async with httpx.AsyncClient() as client:
         try:
             resp = await client.get(target_url, timeout=2.0)

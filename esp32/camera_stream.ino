@@ -4,14 +4,15 @@
 #include <ESPmDNS.h>
 #include <WiFi.h>
 
+#include "secrets.h"
+#define CAMERA_MODEL_AI_THINKER
+#include "camera_pins.h"
+
 // ===================
 // WIFI CREDENTIALS
 // ===================
-const char *ssid = "Nono_2.4";
-const char *password = "50915133";
-
-#define CAMERA_MODEL_AI_THINKER
-#include "camera_pins.h"
+const char *ssid = WIFI_SSID;
+const char *password = WIFI_PASS;
 
 #define ALARM_PIN 13 // Physical Crosswalk LED
 #define FLASH_PIN 4
@@ -26,10 +27,43 @@ static const char *_STREAM_PART =
     "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
 
 // ===================
+// SECURITY HELPERS
+// ===================
+
+bool check_auth(httpd_req_t *req) {
+  char buf[64];
+  char query[128];
+  if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+    if (httpd_query_key_value(query, "auth", buf, sizeof(buf)) == ESP_OK) {
+      if (strcmp(buf, API_KEY) == 0) {
+        return true;
+      }
+    }
+  }
+  Serial.println("Unauthorized access attempt!");
+  httpd_resp_set_status(req, "401 Unauthorized");
+  httpd_resp_send(req, "401 Unauthorized: Invalid API Key", -1);
+  return false;
+}
+
+// ===================
 // ENDPOINT HANDLERS
 // ===================
 
+esp_err_t index_handler(httpd_req_t *req) {
+  if (!check_auth(req)) return ESP_OK;
+  httpd_resp_set_type(req, "text/html");
+  return httpd_resp_send(req, "<h1>ESP32-CAM Safety System Online</h1><p>Auth Status: Verified</p><p>Available endpoints: /stream, /status, /alarm</p>", -1);
+}
+
+esp_err_t favicon_handler(httpd_req_t *req) {
+  // Favicon doesn't strictly need auth to avoid cluttering logs, but we keep it silent
+  httpd_resp_set_status(req, "204 No Content");
+  return httpd_resp_send(req, NULL, 0);
+}
+
 esp_err_t alarm_handler(httpd_req_t *req) {
+  if (!check_auth(req)) return ESP_OK;
   char buf[32];
   char query[64];
   if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
@@ -46,6 +80,7 @@ esp_err_t alarm_handler(httpd_req_t *req) {
 }
 
 esp_err_t status_handler(httpd_req_t *req) {
+  if (!check_auth(req)) return ESP_OK;
   static char json_response[156];
   int rssi = WiFi.RSSI();
   unsigned long uptime = millis() / 1000;
@@ -61,6 +96,7 @@ esp_err_t status_handler(httpd_req_t *req) {
 }
 
 esp_err_t stream_handler(httpd_req_t *req) {
+  if (!check_auth(req)) return ESP_OK;
   camera_fb_t *fb = NULL;
   esp_err_t res = ESP_OK;
   size_t _jpg_buf_len = 0;

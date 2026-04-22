@@ -24,5 +24,8 @@
   "server": {
     "port": 8000,
     "debug": false
+  },
+  "security": {
+    "api_key": "nono_safety_sec_2026"
   }
 }

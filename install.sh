@@ -36,11 +36,23 @@ if [ ! -d ".git" ]; then
 fi
 
 # 3. 建立虛擬環境與安裝 Python 依賴
-echo "[3/4] 正在建立虛擬環境並安裝 AI 模型依賴..."
+echo "[3/4] 正在建立虛擬環境並安裝 AI 模型依賴 (強制 CPU 輕量版)..."
+
+# 清理舊的殘留與快取以確保空間充足
+sudo apt-get clean
+rm -rf ~/.cache/pip
+
 python3 -m venv venv
 source venv/bin/activate
 pip install --upgrade pip
-pip install -r pi/requirements.txt
+
+# 關鍵優化：強制安裝 CPU 版本 torch，避免包含 NVIDIA CUDA 庫 (省下 1.5GB 空間)
+echo "正在安裝核心 AI 套件 (CPU Only)..."
+pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+# 安裝剩餘套件
+pip install --no-cache-dir -r pi/requirements.txt
+pip install --no-cache-dir ultralytics
 
 # 4. 預載模型與環境檢查
 echo "[4/4] 正在初始化環境..."

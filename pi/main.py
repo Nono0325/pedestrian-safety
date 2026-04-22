@@ -14,6 +14,11 @@ DEFAULT_TARGET_IP = "192.168.1.101"
 ALARM_DURATION    = 5  # 警示燈亮燈秒數 (秒)
 MODEL_PATH        = "yolov8n.pt"
 
+# Load security key from config
+with open("pi/config.json", "r") as f:
+    config_sec = json.load(f)
+    API_KEY = config_sec.get("security", {}).get("api_key", "")
+
 # Homography Calibration (場域校正坐標)
 SRC_PTS = [[0, 480], [640, 480], [640, 0], [0, 0]]
 DST_PTS = [[0, 5],   [5, 5],     [5, 0],   [0, 0]]
@@ -24,7 +29,7 @@ INTENT_THRESHOLD_VEL  = 0.5 # 速度門檻 (m/s)
 INTENT_MIN_FRAMES     = 5   # 最少持續偵測幀數
 
 # Derived URLs
-STREAM_URL = f"http://{DEFAULT_TARGET_IP}/stream"
+STREAM_URL = f"http://{DEFAULT_TARGET_IP}/stream?auth={API_KEY}"
 ALARM_URL = f"http://{DEFAULT_TARGET_IP}/alarm"
 
 class PedestrianTracker:
@@ -40,7 +45,7 @@ class PedestrianTracker:
             
         print(">>> AI TRIGGER: ACTivating Crosswalk Alarm")
         try:
-            requests.get(f"{ALARM_URL}?state=on", timeout=1.0)
+            requests.get(f"{ALARM_URL}?state=on&auth={API_KEY}", timeout=1.0)
             self.last_alarm_time = now
             # In a production environment, we'd use a timer to send 'off' 
             # or handle it on the ESP32 side. For MVP, we send 'off' later.
@@ -52,7 +57,7 @@ class PedestrianTracker:
         if self.last_alarm_time > 0 and now - self.last_alarm_time >= ALARM_DURATION:
             print(">>> AI TRIGGER: DEactivating Crosswalk Alarm")
             try:
-                requests.get(f"{ALARM_URL}?state=off", timeout=1.0)
+                requests.get(f"{ALARM_URL}?state=off&auth={API_KEY}", timeout=1.0)
                 self.last_alarm_time = 0
             except:
                 pass

@@ -1,6 +1,6 @@
 opencv-python
 numpy
-ultralytics
+# ultralytics will be installed separately to force CPU version
 lgpio
 requests
 fastapi
