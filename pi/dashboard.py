@@ -202,12 +202,19 @@ async def lifespan(app: FastAPI):
     start_all_fetchers()
     zc_instance = start_mdns_discovery()
     yield
-    # 徹底清除後台任務，確保 Ctrl+C 能瞬間關閉
+    # Shutdown
+    add_log("🛑 系統正在關閉...", "WARN")
     if zc_instance:
         zc_instance.close()
+    
     for task in active_tasks:
         task.cancel()
-    print("\n系統正在安全關閉...")
+    
+    if active_tasks:
+        # 給予 1 秒的時間嘗試優雅關閉，否則直接進到主程序的 os._exit
+        await asyncio.wait(active_tasks, timeout=1.0)
+    
+    print("✅ 資源已釋放。")
 
 app = FastAPI(
     title="One Step Ahead Dashboard",
@@ -305,5 +312,10 @@ async def get_status():
     return combined_status
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=config["server"]["port"])
+    import os
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=config.get("server", {}).get("port", 8000), log_level="info")
+    except KeyboardInterrupt:
+        print("\n\n[FORCE] 偵測到使用者中斷 (Ctrl+C)，正在強制關閉系統...")
+        # 直接結束進程，不再等候卡住的執行緒
+        os._exit(0)
