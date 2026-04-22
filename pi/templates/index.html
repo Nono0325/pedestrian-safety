@@ -3,16 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>先行一步 - AI 行人監控中心</title>
+    <title>先行一步 - AI 交通監控中心</title>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
     <style>
         :root {
             --bg: #0a0e14;
             --glass: rgba(255, 255, 255, 0.05);
-            --accent: #00f2ff;
+            --accent: #ffb300; /* Hazard Amber */
             --danger: #ff4b5c;
             --success: #00e676;
             --text: #e0e0e0;
+            --info: #00f2ff;
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Outfit', sans-serif; }
@@ -22,7 +23,7 @@
         }
 
         header { margin-bottom: 2rem; display: flex; justify-content: space-between; align-items: center; }
-        h1 { font-size: 1.8rem; color: var(--accent); text-shadow: 0 0 15px rgba(0, 242, 255, 0.3); }
+        h1 { font-size: 1.8rem; color: var(--accent); text-shadow: 0 0 15px rgba(255, 179, 0, 0.3); }
 
         .settings-btn {
             background: var(--glass); border: 1px solid rgba(255, 255, 255, 0.1); color: white;
@@ -48,14 +49,33 @@
         .info-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
         .cam-name { font-weight: 600; font-size: 1.1rem; }
 
-        /* Data Grid */
         .data-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; font-size: 0.85rem; }
         .data-item { display: flex; align-items: center; gap: 8px; opacity: 0.8; }
-        .data-label { color: var(--accent); font-weight: 600; min-width: 45px; }
+        .data-label { color: var(--info); font-weight: 600; min-width: 45px; }
 
         .status-badge { padding: 4px 10px; border-radius: 20px; font-size: 0.7rem; font-weight: 600; }
-        .online { background: rgba(0, 230, 118, 0.15); color: var(--success); }
-        .offline { background: rgba(255, 75, 92, 0.15); color: var(--danger); }
+        .online { background: rgba(0, 230, 118, 0.1); color: var(--success); }
+        .offline { background: rgba(255, 75, 92, 0.1); color: var(--danger); }
+
+        /* Hazard Style Toggle */
+        .hazard-btn {
+            background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1);
+            width: 44px; height: 44px; border-radius: 12px; cursor: pointer; display: flex;
+            align-items: center; justify-content: center; transition: 0.3s;
+            color: #666;
+        }
+        .hazard-on { 
+            background: rgba(255, 179, 0, 0.2); color: var(--accent); 
+            box-shadow: 0 0 20px rgba(255, 179, 0, 0.4); 
+            border-color: var(--accent);
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.6; }
+            100% { opacity: 1; }
+        }
 
         .rssi-bar { width: 40px; height: 4px; background: #333; border-radius: 2px; overflow: hidden; }
         .rssi-fill { height: 100%; background: var(--success); transition: 1s; }
@@ -64,9 +84,9 @@
 <body>
     <header>
         <div>
-            <h1>先行一步 AI 監控中心</h1>
+            <h1>先行一步：斑馬線智慧預警看板</h1>
         </div>
-        <a href="/settings" class="settings-btn">系統設定 (Settings)</a>
+        <a href="/settings" class="settings-btn">系統配置 (Settings)</a>
     </header>
 
     <main class="dashboard-grid">
@@ -78,7 +98,14 @@
             <div class="card-info">
                 <div class="info-top">
                     <span class="cam-name">{{ cam.name }}</span>
-                    <span class="status-badge offline" id="badge-{{ cam.id }}">OFFLINE</span>
+                    <div style="display: flex; gap: 12px; align-items: center;">
+                        <button class="hazard-btn" id="hazard-{{ cam.id }}" onclick="toggleAlarm({{ cam.id }})" title="手動觸發斑馬線警示燈">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4m0 4h.01" />
+                            </svg>
+                        </button>
+                        <span class="status-badge offline" id="badge-{{ cam.id }}">OFFLINE</span>
+                    </div>
                 </div>
                 <div class="data-grid">
                     <div class="data-item">
@@ -91,12 +118,12 @@
                         <span id="uptime-{{ cam.id }}">--s</span>
                     </div>
                     <div class="data-item">
-                        <span class="data-label">感測</span>
-                        <span id="sensor-{{ cam.id }}">-- V</span>
+                        <span class="data-label">警示</span>
+                        <span id="alarm-state-{{ cam.id }}">靜止</span>
                     </div>
                     <div class="data-item">
-                        <span class="data-label">IP</span>
-                        <span>{{ cam.ip }}</span>
+                        <span class="data-label">偵測</span>
+                        <span id="sensor-{{ cam.id }}">-- V</span>
                     </div>
                 </div>
             </div>
@@ -105,6 +132,16 @@
     </main>
 
     <script>
+        let alarmStates = {};
+
+        async function toggleAlarm(id) {
+            const newState = alarmStates[id] === 1 ? 'off' : 'on';
+            try {
+                await fetch(`/control/${id}/${newState}`, { method: 'POST' });
+                updateStatus();
+            } catch (e) {}
+        }
+
         async function updateStatus() {
             try {
                 const resp = await fetch('/status');
@@ -115,29 +152,40 @@
                     const rssiVal = document.getElementById('rssi-val-' + cam.id);
                     const uptime = document.getElementById('uptime-' + cam.id);
                     const sensor = document.getElementById('sensor-' + cam.id);
+                    const hazardBtn = document.getElementById('hazard-' + cam.id);
+                    const stateLabel = document.getElementById('alarm-state-' + cam.id);
                     
+                    alarmStates[cam.id] = cam.alarm;
+
                     if (cam.online) {
                         badge.className = 'status-badge online';
-                        badge.innerText = 'ONLINE';
+                        badge.innerText = 'CONNECTED';
                         
-                        // RSSI logic: -30 (best) to -100 (worst)
                         let pct = Math.max(0, Math.min(100, 2 * (cam.rssi + 100)));
                         rssiFill.style.width = pct + '%';
-                        rssiFill.style.background = pct > 50 ? '#00e676' : (pct > 20 ? '#ffb300' : '#ff4b5c');
+                        rssiFill.style.background = pct > 50 ? 'var(--success)' : (pct > 20 ? 'var(--accent)' : 'var(--danger)');
                         rssiVal.innerText = cam.rssi + ' dBm';
-                        
                         uptime.innerText = cam.uptime + 's';
                         sensor.innerText = cam.sensor.toFixed(2) + ' V';
+                        
+                        if (cam.alarm === 1) {
+                            hazardBtn.classList.add('hazard-on');
+                            stateLabel.innerText = '觸發中';
+                            stateLabel.style.color = 'var(--accent)';
+                        } else {
+                            hazardBtn.classList.remove('hazard-on');
+                            stateLabel.innerText = '靜止';
+                            stateLabel.style.color = 'inherit';
+                        }
                     } else {
                         badge.className = 'status-badge offline';
                         badge.innerText = 'OFFLINE';
-                        rssiFill.style.width = '0%';
-                        rssiVal.innerText = '-- dBm';
+                        hazardBtn.classList.remove('hazard-on');
                     }
                 });
             } catch (e) {}
         }
-        setInterval(updateStatus, 3000);
+        setInterval(updateStatus, 2000);
         updateStatus();
     </script>
 </body>

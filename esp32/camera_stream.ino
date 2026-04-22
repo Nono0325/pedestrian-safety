@@ -1,6 +1,5 @@
 /*
- * ESP32-CAM MJPEG Stream & Status Server
- * For: 115年人本環境全國大專院校學生競賽 B組創意構想組
+ * ESP32-CAM MJPEG Stream, Status & Crosswalk Alarm Server
  */
 
 #include "esp_camera.h"
@@ -16,6 +15,9 @@ const char* password = "YOUR_WIFI_PASSWORD";
 #define CAMERA_MODEL_AI_THINKER
 #include "camera_pins.h"
 
+#define ALARM_PIN 13 // Physical Crosswalk LED (Recommended)
+#define FLASH_PIN 4  // Internal Flash
+
 httpd_handle_t stream_httpd = NULL;
 
 #define PART_BOUNDARY "123456789000000000000987654321"
@@ -24,19 +26,32 @@ static const char* _STREAM_BOUNDARY = "\r\n--" PART_BOUNDARY "\r\n";
 static const char* _STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
 
 // ===================
-// CUSTOM STATUS LOGIC
+// ENDPOINT HANDLERS
 // ===================
+
+esp_err_t alarm_handler(httpd_req_t *req){
+    char buf[32];
+    int ret = httpd_query_key_value(req->uri_query, "state", buf, sizeof(buf));
+    if (ret == ESP_OK) {
+        if (strcmp(buf, "on") == 0) {
+            digitalWrite(ALARM_PIN, HIGH);
+        } else {
+            digitalWrite(ALARM_PIN, LOW);
+        }
+    }
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    return httpd_resp_send(req, "OK", 2);
+}
+
 esp_err_t status_handler(httpd_req_t *req){
-    static char json_response[128];
+    static char json_response[156];
     int rssi = WiFi.RSSI();
     unsigned long uptime = millis() / 1000;
-    
-    // Simulating a custom sensor value (e.g. PIR or Light level)
     float sensor_val = analogRead(34) * (3.3 / 4095.0); 
 
     snprintf(json_response, sizeof(json_response), 
-             "{\"rssi\": %d, \"uptime\": %lu, \"sensor\": %.2f}", 
-             rssi, uptime, sensor_val);
+             "{\"rssi\": %d, \"uptime\": %lu, \"sensor\": %.2f, \"alarm\": %d}", 
+             rssi, uptime, sensor_val, digitalRead(ALARM_PIN));
     
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -55,26 +70,14 @@ esp_err_t stream_handler(httpd_req_t *req){
 
     while(true){
         fb = esp_camera_fb_get();
-        if(!fb){
-            res = ESP_FAIL;
-        } else {
-            _jpg_buf_len = fb->len;
-            _jpg_buf = fb->buf;
-        }
+        if(!fb){ res = ESP_FAIL; } else { _jpg_buf_len = fb->len; _jpg_buf = fb->buf; }
         if(res == ESP_OK){
             size_t hlen = snprintf((char *)part_buf, 64, _STREAM_PART, _jpg_buf_len);
             res = httpd_resp_send_chunk(req, (const char *)part_buf, hlen);
         }
-        if(res == ESP_OK){
-            res = httpd_resp_send_chunk(req, (const char *)_jpg_buf, _jpg_buf_len);
-        }
-        if(res == ESP_OK){
-            res = httpd_resp_send_chunk(req, _STREAM_BOUNDARY, strlen(_STREAM_BOUNDARY));
-        }
-        if(fb){
-            esp_camera_fb_return(fb);
-            fb = NULL;
-        }
+        if(res == ESP_OK){ res = httpd_resp_send_chunk(req, (const char *)_jpg_buf, _jpg_buf_len); }
+        if(res == ESP_OK){ res = httpd_resp_send_chunk(req, _STREAM_BOUNDARY, strlen(_STREAM_BOUNDARY)); }
+        if(fb){ esp_camera_fb_return(fb); fb = NULL; }
         if(res != ESP_OK){ break; }
     }
     return res;
@@ -82,6 +85,10 @@ esp_err_t stream_handler(httpd_req_t *req){
 
 void setup() {
     Serial.begin(115200);
+    pinMode(ALARM_PIN, OUTPUT);
+    pinMode(FLASH_PIN, OUTPUT);
+    digitalWrite(ALARM_PIN, LOW);
+    digitalWrite(FLASH_PIN, LOW); // Keep flash off
     
     camera_config_t config;
     config.ledc_channel = LEDC_CHANNEL_0;
@@ -119,10 +126,12 @@ void setup() {
 
     httpd_uri_t stream_uri = { .uri = "/stream", .method = HTTP_GET, .handler = stream_handler, .user_ctx = NULL };
     httpd_uri_t status_uri = { .uri = "/status", .method = HTTP_GET, .handler = status_handler, .user_ctx = NULL };
+    httpd_uri_t alarm_uri = { .uri = "/alarm", .method = HTTP_GET, .handler = alarm_handler, .user_ctx = NULL };
 
     if (httpd_start(&stream_httpd, &http_config) == ESP_OK) {
         httpd_register_uri_handler(stream_httpd, &stream_uri);
         httpd_register_uri_handler(stream_httpd, &status_uri);
+        httpd_register_uri_handler(stream_httpd, &alarm_uri);
     }
 }
 

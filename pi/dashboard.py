@@ -23,9 +23,7 @@ app = FastAPI(title="先行一步 AI 監控儀表板")
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
 
 # Global State
-# camera_id -> b'jpeg_bytes'
 frame_cache = {}
-# camera_id -> {"rssi": -x, "uptime": x, "sensor": x.x}
 status_cache = {}
 
 class CameraConfig(BaseModel):
@@ -40,11 +38,8 @@ class SettingsUpdate(BaseModel):
 # BACKGROUND TASKS
 # ===================
 async def fetch_camera_data(cam_id: int, ip: str):
-    """Fetcher for both MJPEG stream and JSON status."""
     stream_url = f"http://{ip}/stream"
     status_url = f"http://{ip}/status"
-    
-    print(f"Fetcher started: Cam {cam_id} ({ip})")
     
     async def poll_status():
         async with httpx.AsyncClient() as client:
@@ -75,7 +70,6 @@ async def fetch_camera_data(cam_id: int, ip: str):
     
     await asyncio.gather(poll_status(), poll_video())
 
-# Task management
 active_tasks = []
 
 def start_all_fetchers():
@@ -83,7 +77,6 @@ def start_all_fetchers():
     for task in active_tasks:
         task.cancel()
     active_tasks = []
-    
     for cam in config["cameras"]:
         task = asyncio.create_task(fetch_camera_data(cam["id"], cam["ip"]))
         active_tasks.append(task)
@@ -116,10 +109,22 @@ async def update_settings(data: SettingsUpdate):
     config["cameras"] = [cam.dict() for cam in data.cameras]
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
-    
-    # Reload fetchers
     start_all_fetchers()
     return {"status": "ok"}
+
+@app.post("/control/{cam_id}/{state}")
+async def control_led(cam_id: int, state: str):
+    # Find camera IP
+    cam = next((c for c in config["cameras"] if c["id"] == cam_id), None)
+    if not cam: return {"status": "error", "message": "Camera not found"}
+    
+    target_url = f"http://{cam['ip']}/led?state={state}"
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(target_url, timeout=2.0)
+            return {"status": "ok", "response": resp.text}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
 async def gen_frames(cam_id: int):
     while True:
@@ -139,13 +144,14 @@ async def get_status():
     for cam in config["cameras"]:
         cam_id = cam["id"]
         online = cam_id in frame_cache
-        data = status_cache.get(cam_id, {"rssi": 0, "uptime": 0, "sensor": 0.0})
+        data = status_cache.get(cam_id, {"rssi": 0, "uptime": 0, "sensor": 0.0, "led": 0})
         combined_status.append({
             "id": cam_id,
             "online": online,
             "rssi": data["rssi"],
             "uptime": data["uptime"],
-            "sensor": data["sensor"]
+            "sensor": data["sensor"],
+            "led": data["led"]
         })
     return combined_status
 
