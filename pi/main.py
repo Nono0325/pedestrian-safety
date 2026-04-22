@@ -1,6 +1,7 @@
 import cv2
 import time
 import requests
+import json
 import numpy as np
 from ultralytics import YOLO
 from utils import HomographyTransformer, calculate_velocity, is_approaching_curb
