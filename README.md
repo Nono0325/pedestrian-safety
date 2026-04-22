@@ -17,6 +17,17 @@
 
 ---
 
+## 🛠️ 技術棧 (Technological Stack)
+| 類別 | 使用技術 |
+| :--- | :--- |
+| **AI & 視覺辨識** | YOLOv8 (物件偵測), ByteTrack (追蹤), OpenCV, Homography (單鏡頭測距) |
+| **後端開發** | Python 3.11+, FastAPI, Uvicorn, Zeroconf (mDNS 自動發現) |
+| **嵌入式韌體** | C++, Arduino ESP32 Core, esp_http_server, mDNS Responder |
+| **前端介面** | HTML5, CSS3 (Glassmorphism), JavaScript (Async Fetch), Jinja2 |
+| **環境部署** | Linux Bash Shell, Python Virtual Environment (venv) |
+
+---
+
 ## 🛠️ 硬體清單 (Bill of Materials)
 | 元件名稱 | 用途 | 規格建議 |
 | :--- | :--- | :--- |
@@ -79,6 +90,6 @@ curl -sSL https://raw.githubusercontent.com/Nono0325/pedestrian-safety/main/inst
 ## 📜 聯絡與作者
 本專案為 **115年人本環境全國大專院校學生競賽** B組創意構想組作品。
 
-- **團隊名稱**: Nono-PI-4G
+- **團隊名稱**: nono-pi-4g
 - **開發者 ID**: 50915133
 - **競賽時間**: 2026年4月
