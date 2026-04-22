@@ -98,18 +98,28 @@ async def fetch_camera_data(cam_id: int, ip: str):
                 await asyncio.sleep(3)
 
     async def poll_video():
+        first_frame = True
         while True:
             try:
-                # 使用執行緒開啟捕捉，避免阻塞事件迴圈 (解決 Ctrl+C 卡死)
+                # 使用執行緒開啟捕捉
                 cap = await asyncio.to_thread(cv2.VideoCapture, stream_url)
-                # 設定連線逾時為 5 秒
                 await asyncio.to_thread(cap.set, cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
                 
+                if not await asyncio.to_thread(cap.isOpened):
+                    print(f"⚠️ [CAM {cam_id}] 無法連上串流，將在 5 秒後重試...")
+                    await asyncio.sleep(5)
+                    continue
+
                 while await asyncio.to_thread(cap.isOpened):
-                    # 使用執行緒讀取畫面
                     ret, frame = await asyncio.to_thread(cap.read)
-                    if not ret: break
+                    if not ret: 
+                        print(f"❌ [CAM {cam_id}] 影像讀取中斷...")
+                        break
                     
+                    if first_frame:
+                        print(f"✅ [CAM {cam_id}] 成功抓取到首幀影像！路徑: {ip}")
+                        first_frame = False
+
                     frame = cv2.resize(frame, (640, 480))
                     _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
                     frame_cache[cam_id] = buffer.tobytes()
@@ -118,7 +128,8 @@ async def fetch_camera_data(cam_id: int, ip: str):
                 await asyncio.to_thread(cap.release)
             except asyncio.CancelledError:
                 break
-            except:
+            except Exception as e:
+                print(f"🔥 [CAM {cam_id}] 發生錯誤: {e}")
                 frame_cache.pop(cam_id, None)
                 await asyncio.sleep(5)
     
