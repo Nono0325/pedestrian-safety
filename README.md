@@ -7,6 +7,12 @@
 curl -sSL https://raw.githubusercontent.com/Nono0325/pedestrian-safety/main/install.sh | bash
 ```
 
+## 📊 監控儀表板 (Web Dashboard)
+本專案包含一個現代化的 Web 儀表板，可同時監控多達 5 台 ESP32-CAM：
+- **啟動方式**: `venv/bin/python3 pi/dashboard.py`
+- **瀏覽網址**: `http://<樹莓派IP>:8000`
+- **功能**: 即時影像串流、連線狀態顯示、玻璃擬態 UI。
+
 本專案旨在參與「115年人本環境全國大專院校學生競賽」，透過邊緣運算 (Edge AI) 技術提升校園與社區行穿線的安全性。
 
 ## 系統架構

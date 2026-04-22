@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>先行一步 - AI 行人監控中心</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0a0e14;
+            --glass: rgba(255, 255, 255, 0.05);
+            --accent: #00f2ff;
+            --danger: #ff4b5c;
+            --success: #00e676;
+            --text: #e0e0e0;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 2rem;
+            background: radial-gradient(circle at top right, #1a2a3a, var(--bg));
+        }
+
+        header {
+            margin-bottom: 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 {
+            font-size: 1.8rem;
+            font-weight: 600;
+            letter-spacing: 1px;
+            color: var(--accent);
+            text-shadow: 0 0 15px rgba(0, 242, 255, 0.3);
+        }
+
+        .status-header {
+            font-size: 0.9rem;
+            opacity: 0.7;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .camera-card {
+            background: var(--glass);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            overflow: hidden;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            position: relative;
+        }
+
+        .camera-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            border-color: var(--accent);
+        }
+
+        .video-container {
+            aspect-ratio: 4/3;
+            background: #000;
+            position: relative;
+        }
+
+        .video-container img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .offline-placeholder {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: #000;
+            color: #666;
+        }
+
+        .card-info {
+            padding: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .cam-name {
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+
+        .cam-status-badge {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+
+        .status-online { background: rgba(0, 230, 118, 0.15); color: var(--success); }
+        .status-offline { background: rgba(255, 75, 92, 0.15); color: var(--danger); }
+
+        .cam-overlay {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            pointer-events: none;
+        }
+
+        @media (max-width: 600px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div>
+            <h1>先行一步 AI 監控儀表板</h1>
+            <p class="status-header">115年人本環境競賽 - 創意構想組</p>
+        </div>
+        <div id="global-status">
+            SYSTEM READY
+        </div>
+    </header>
+
+    <main class="dashboard-grid">
+        {% for cam in cameras %}
+        <div class="camera-card" id="cam-{{ cam.id }}">
+            <div class="video-container">
+                <img src="/video_feed/{{ cam.id }}" onerror="handleError({{ cam.id }})" id="img-{{ cam.id }}">
+                <div class="offline-placeholder" id="placeholder-{{ cam.id }}" style="display: none;">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M1 1l22 22M15 10.246V6a2 2 0 00-2-2H4.84M3.053 3.052A2 2 0 002 4.84v10.32a2 2 0 002 2h10c.516 0 .983-.195 1.332-.516M11.636 11.636L15 15m0-10l5.447-2.724A1 1 0 0122 3.17v13.66a1 1 0 01-1.553.832l-2.083-1.042" />
+                    </svg>
+                    <p style="margin-top: 10px;">影像連結中...</p>
+                </div>
+                <div class="cam-overlay">IP: {{ cam.ip }}</div>
+            </div>
+            <div class="card-info">
+                <div class="cam-name">{{ cam.name }}</div>
+                <div class="cam-status-badge status-offline" id="badge-{{ cam.id }}">OFFLINE</div>
+            </div>
+        </div>
+        {% endfor %}
+    </main>
+
+    <script>
+        function handleError(id) {
+            document.getElementById('img-' + id).style.display = 'none';
+            document.getElementById('placeholder-' + id).style.display = 'flex';
+            document.getElementById('badge-' + id).className = 'cam-status-badge status-offline';
+            document.getElementById('badge-' + id).innerText = 'OFFLINE';
+        }
+
+        async function updateStatus() {
+            try {
+                const response = await fetch('/status');
+                const data = await response.json();
+                data.forEach(cam => {
+                    const badge = document.getElementById('badge-' + cam.id);
+                    const img = document.getElementById('img-' + cam.id);
+                    const placeholder = document.getElementById('placeholder-' + cam.id);
+                    
+                    if (cam.online) {
+                        badge.className = 'cam-status-badge status-online';
+                        badge.innerText = 'ONLINE';
+                        img.style.display = 'block';
+                        placeholder.style.display = 'none';
+                    } else {
+                        handleError(cam.id);
+                    }
+                });
+            } catch (e) {
+                console.error("Status check failed", e);
+            }
+        }
+
+        setInterval(updateStatus, 3000);
+        updateStatus();
+    </script>
+</body>
+</html>

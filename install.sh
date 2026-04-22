@@ -13,7 +13,11 @@ echo "-------------------------------------------------------"
 # 1. 更新系統與安裝必要套件
 echo "[1/4] 正在更新系統並安裝必要的硬體套件..."
 sudo apt-get update -y
-sudo apt-get install -y python3-venv python3-pip liblgpio-dev python3-opencv git
+sudo apt-get install -y python3-venv python3-pip liblgpio-dev python3-opencv git libgl1
+
+# 建立必要目錄
+mkdir -p pi/templates
+mkdir -p pi/static
 
 # 2. 建立專案目錄與下載碼 (如果不在目錄內)
 PROJECT_DIR="pedestrian-safety"
@@ -42,7 +46,8 @@ echo "部署完成！"
 echo "-------------------------------------------------------"
 echo "使用方式:"
 echo "1. 進入目錄: cd pedestrian-safety"
-echo "2. 啟動系統: venv/bin/python3 pi/main.py"
+echo "2. 啟動後台辨識: venv/bin/python3 pi/main.py"
+echo "3. 啟動 Web 儀表板: venv/bin/python3 pi/dashboard.py"
 echo ""
-echo "注意: 執行前請確保 pi/main.py 中的 STREAM_URL 已設為正確的 ESP32 IP 位址。"
+echo "注意: 執行前請確保 pi/config.json 中的 IP 位址已設為正確的 ESP32 IP。"
 echo "-------------------------------------------------------"
