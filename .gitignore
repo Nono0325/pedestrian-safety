@@ -1,0 +1,17 @@
+# Bytecount and cached files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Models
+*.pt
+*.onnx
+*.weights
+
+# Environment
+venv/
+.env
+
+# OS files
+.DS_Store
+Thumbs.db
