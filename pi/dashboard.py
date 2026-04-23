@@ -5,6 +5,7 @@ import asyncio
 import cv2
 import httpx
 import socket
+import numpy as np
 from collections import deque
 from datetime import datetime
 from fastapi import FastAPI, Request, BackgroundTasks, Form
@@ -153,9 +154,8 @@ async def fetch_camera_data(cam_id: int, ip: str):
     async def poll_video():
         reconnect_delay = 5
         while not is_shutting_down:
-            cap = None
             try:
-                # 1. 第一步：先進行極細 TCP 探測 (自動處理 Port)
+                # 1. 第一步：先進行極細 TCP 探測
                 is_port_open, msg = await check_tcp_port(ip, 80)
                 if not is_port_open:
                     add_log(f"⚠️ [CAM {cam_id}] TCP 連線異常 ({msg})", "WARN")
@@ -163,42 +163,53 @@ async def fetch_camera_data(cam_id: int, ip: str):
                     reconnect_delay *= 2
                     continue
                 
-                reconnect_delay = 5 # 連線成功後重設延遲
+                reconnect_delay = 5 # 重置
                 
-                # 2. 第二步：開啟串流
-                cap = await asyncio.to_thread(cv2.VideoCapture, stream_url)
-                await asyncio.to_thread(cap.set, cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
-                
-                if not await asyncio.to_thread(cap.isOpened):
-                    add_log(f"⚠️ [CAM {cam_id}] 影像流開啟超時 (可能設備忙碌)", "WARN")
-                    await asyncio.sleep(10)
-                    continue
-
-                first_frame = True
-                while await asyncio.to_thread(cap.isOpened) and not is_shutting_down:
-                    ret, frame = await asyncio.to_thread(cap.read)
-                    if not ret: 
-                        add_log(f"❌ [CAM {cam_id}] 串流訊號中斷", "ERROR")
-                        break
-                    
-                    if first_frame:
-                        add_log(f"✅ [CAM {cam_id}] 影像解碼成功！通訊穩定。", "INFO")
-                        first_frame = False
-
-                    frame = cv2.resize(frame, (640, 480))
-                    _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-                    frame_cache[cam_id] = buffer.tobytes()
-                    await asyncio.sleep(1/15)
-                
+                # 2. 第二步：使用 httpx 手動解析 MJPEG
+                async with httpx.AsyncClient() as client:
+                    async with client.stream("GET", stream_url, timeout=None) as response:
+                        if response.status_code != 200:
+                            if response.status_code == 401:
+                                add_log(f"🔥 [CAM {cam_id}] 認證失敗 (API Key 錯誤)", "ERROR")
+                            else:
+                                add_log(f"⚠️ [CAM {cam_id}] 影像流回應異常 (HTTP {response.status_code})", "WARN")
+                            await asyncio.sleep(10)
+                            continue
+                        
+                        add_log(f"✅ [CAM {cam_id}] 串流建立成功", "INFO")
+                        
+                        buffer = b""
+                        async for chunk in response.aiter_bytes():
+                            if is_shutting_down: break
+                            buffer += chunk
+                            
+                            while True:
+                                a = buffer.find(b'\xff\xd8') # JPEG Start
+                                b = buffer.find(b'\xff\xd9') # JPEG End
+                                if a != -1 and b != -1 and b > a:
+                                    jpg = buffer[a:b+2]
+                                    buffer = buffer[b+2:]
+                                    
+                                    # 解碼與縮放
+                                    nparr = np.frombuffer(jpg, np.uint8)
+                                    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                                    if frame is not None:
+                                        frame = cv2.resize(frame, (640, 480))
+                                        _, buffer_jpg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                                        frame_cache[cam_id] = buffer_jpg.tobytes()
+                                    
+                                    await asyncio.sleep(0.001) # 給予系統喘息空間
+                                else:
+                                    break
+                                    
+                            if len(buffer) > 1000000: # 緩衝區保護
+                                buffer = b""
+            
             except asyncio.CancelledError:
-                break # 正常關閉
+                break
             except Exception as e:
-                add_log(f"🔥 [CAM {cam_id}] 執行緒發生錯誤: {str(e)[:30]}", "ERROR")
-                frame_cache.pop(cam_id, None)
+                add_log(f"🔥 [CAM {cam_id}] 串流中斷: {str(e)[:30]}", "ERROR")
                 await asyncio.sleep(5)
-            finally:
-                if cap:
-                    await asyncio.to_thread(cap.release)
     
     await asyncio.gather(poll_status(), poll_video())
 
