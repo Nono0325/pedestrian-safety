@@ -69,6 +69,23 @@
             <a href="/" style="color: var(--text); text-decoration: none; opacity: 0.7;">← 返回儀表板</a>
         </header>
 
+        <!-- 新增：網路診斷小工具 -->
+        <section class="glass-card" style="border-left: 4px solid var(--info); padding: 1.5rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <h3 style="margin: 0; font-size: 1.1rem; color: var(--info);">📍 系統網路資訊</h3>
+                    <div id="net-info" style="font-size: 0.9rem; opacity: 0.7; margin-top: 5px;">正在取得網路狀態...</div>
+                </div>
+                <div style="text-align: right;">
+                    <div style="font-size: 0.8rem; opacity: 0.5; margin-bottom: 5px;">連線測試 (TCP)</div>
+                    <div style="display: flex; gap: 5px;">
+                        <input type="text" id="ping-target" placeholder="192.168.x.x" style="padding: 5px 10px; width: 140px; font-size: 0.8rem;">
+                        <button class="btn btn-outline" style="padding: 5px 10px; font-size: 0.8rem;" onclick="testConnection()">測試</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
         <section class="glass-card">
             <h2>📜 已配置攝影機</h2>
             <form id="config-form">
@@ -107,6 +124,35 @@
     <script>
         let rowCount = {{ cameras|length }};
 
+        async function fetchNetInfo() {
+            try {
+                const resp = await fetch('/api/net_info');
+                const data = await resp.json();
+                document.getElementById('net-info').innerText = `主機名稱: ${data.hostname} | 區域網路 IP: ${data.local_ip}`;
+            } catch (e) {
+                document.getElementById('net-info').innerText = "無法取得網路資訊";
+            }
+        }
+        window.onload = fetchNetInfo;
+
+        async function testConnection() {
+            const target = document.getElementById('ping-target').value;
+            if(!target) return;
+            const btn = event.currentTarget;
+            const originalText = btn.innerText;
+            btn.innerText = "⏳";
+            try {
+                const resp = await fetch(`/api/ping/${target}`);
+                const data = await resp.json();
+                if(data.status === "success") {
+                    alert(`✅ 連線成功！ ${target} 可正常通訊。`);
+                } else {
+                    alert(`❌ 連線失敗！ ${target} 無法回應，請確認設備已開啟且在同一個網段。`);
+                }
+            } catch(e) { alert("連線測試發生錯誤"); }
+            finally { btn.innerText = originalText; }
+        }
+
         function addRow(name = "", ip = "") {
             const container = document.getElementById('camera-list');
             const div = document.createElement('div');
@@ -121,7 +167,10 @@
             rowCount++;
         }
 
-        function removeRow(id) { document.getElementById(`row-${id}`).remove(); }
+        function removeRow(id) { 
+            const row = document.getElementById(`row-${id}`);
+            if(row) row.remove(); 
+        }
 
         async function startScan() {
             const btn = document.getElementById('scan-btn');
@@ -161,26 +210,37 @@
 
         document.getElementById('config-form').onsubmit = async (e) => {
             e.preventDefault();
-            const formData = new FormData(e.target);
             const cameras = [];
+            const rows = document.querySelectorAll('.cam-row');
             
-            // Collect all rows (up to a reasonable limit)
-            for(let i=0; i<10; i++) {
-                const n = formData.get(`name_${i}`);
-                const ip = formData.get(`ip_${i}`);
-                if (n && ip) {
-                    cameras.push({ id: i+1, name: n, ip: ip });
+            rows.forEach((row, index) => {
+                const nameInput = row.querySelector('input[type="text"]:nth-child(1)');
+                const ipInput = row.querySelector('input[type="text"]:nth-child(2)');
+                if (nameInput && ipInput && nameInput.value && ipInput.value) {
+                    cameras.push({ 
+                        id: index + 1, 
+                        name: nameInput.value, 
+                        ip: ipInput.value 
+                    });
                 }
+            });
+
+            if (cameras.length === 0) {
+                if(!confirm("目前沒有配置任何攝影機，確定要儲存嗎？")) return;
             }
 
-            const resp = await fetch('/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ cameras })
-            });
-            if (resp.ok) {
-                alert("設定已儲存並生效！");
-                window.location.href = "/";
+            try {
+                const resp = await fetch('/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cameras })
+                });
+                if (resp.ok) {
+                    alert("設定已儲存並生效！系統正在重新啟動背景連線任務。");
+                    window.location.href = "/";
+                }
+            } catch (err) {
+                alert("儲存失敗，請檢查後端服務是否正常。");
             }
         };
     </script>

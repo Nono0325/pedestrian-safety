@@ -105,3 +105,22 @@ curl -sSL https://raw.githubusercontent.com/Nono0325/pedestrian-safety/main/inst
     *   範例：`http://{IP}/stream?auth={YOUR_API_KEY}`
 3.  **金鑰更換**：若需更換金鑰，請同步修改 `esp32/secrets.h` 與 `pi/config.json` 中的 `api_key` 欄位。
 4.  **CORS 限制**：儀表板後端已限制僅允許本地端存取，若需遠端監控建議搭配 VPN 或 SSH Tunnel。
+
+---
+
+## 🔍 網路連線疑難排解 (Network Troubleshooting)
+
+若您在儀表板看到「TCP 握手失敗」或影像無法顯示，請檢查以下事項：
+
+1. **檢查網段是否一致**：
+   - 確保 Raspberry Pi 與 ESP32-CAM 連接至同一個 Wi-Fi 路由器。
+   - 進入「系統設定」頁面，檢查頁面上方顯示的「區域網路 IP」是否與攝影機 IP 在同一個網段 (例如皆為 `192.168.50.x`)。
+2. **使用診斷工具**：
+   - 在「系統設定」頁面，使用「連線測試 (TCP)」工具手動輸入攝影機 IP 進行測試。
+   - 若測試顯示「連線成功」，但影像仍未顯示，請檢查 ESP32 端的 `secrets.h` 中的 API Key 是否與 `config.json` 一致。
+3. **mDNS 自動發現**：
+   - 若不確定攝影機 IP，請點擊「開始掃描」按鈕。系統會透過 mDNS 協定自動尋找名稱包含 `esp32-safety` 的設備。
+4. **防火牆限制**：
+   - 部分路由器會開啟「AP 隔離」功能，這會導致 Pi 無法連線至 ESP32，請確保此功能已關閉。
+5. **模擬器測試**：
+   - 若無硬體，可執行 `python pi/mock_esp32.py` 並在設定中加入 `127.0.0.1:8080` 作為攝影機。

@@ -51,17 +51,35 @@ def add_log(message: str, level: str = "INFO"):
     system_logs.append(entry)
     print(f"[{timestamp}] {level}: {message}")
 
-async def check_tcp_port(ip: str, port: int, timeout: float = 1.0) -> bool:
-    """底層 TCP 探測，確認通訊埠是否開放"""
+async def check_tcp_port(host_port: str, default_port: int = 80, timeout: float = 1.0) -> bool:
+    """底層 TCP 探測，支援 '192.168.1.102' 或 '127.0.0.1:8080' 格式"""
     try:
+        if ":" in host_port:
+            host, port_str = host_port.split(":")
+            port = int(port_str)
+        else:
+            host = host_port
+            port = default_port
+            
         reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(ip, port), timeout=timeout
+            asyncio.open_connection(host, port), timeout=timeout
         )
         writer.close()
         await writer.wait_closed()
         return True
     except:
         return False
+
+def get_local_ip():
+    """獲取當前設備在區域網路中的 IP"""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except:
+        return "127.0.0.1"
 
 class CameraConfig(BaseModel):
     id: int
@@ -130,10 +148,10 @@ async def fetch_camera_data(cam_id: int, ip: str):
         first_frame = True
         while True:
             try:
-                # 1. 第一步：先進行極細 TCP 探測
+                # 1. 第一步：先進行極細 TCP 探測 (自動處理 Port)
                 is_port_open = await check_tcp_port(ip, 80)
                 if not is_port_open:
-                    add_log(f"⚠️ [CAM {cam_id}] TCP 握手失敗 (Port 80 被防火牆或路徑阻斷)", "WARN")
+                    add_log(f"⚠️ [CAM {cam_id}] TCP 握手失敗 (IP: {ip} 無回應)", "WARN")
                     await asyncio.sleep(5)
                     continue
 
@@ -284,6 +302,20 @@ async def video_feed(cam_id: int):
 @app.get("/api/logs")
 async def get_logs():
     return list(system_logs)
+
+@app.get("/api/net_info")
+async def get_net_info():
+    """返回 Pi 的當前網路狀態"""
+    return {
+        "local_ip": get_local_ip(),
+        "hostname": socket.gethostname()
+    }
+
+@app.get("/api/ping/{target}")
+async def ping_target(target: str):
+    """測試到目標 IP 的 TCP 連通性"""
+    success = await check_tcp_port(target, 80, timeout=2.0)
+    return {"status": "success" if success else "failed", "target": target}
 
 @app.post("/api/restart")
 async def restart_fetchers():
