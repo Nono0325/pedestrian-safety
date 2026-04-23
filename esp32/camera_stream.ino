@@ -4,6 +4,10 @@
 #include <ESPmDNS.h>
 #include <WiFi.h>
 
+// Power management headers
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
+
 #include "secrets.h"
 #define CAMERA_MODEL_AI_THINKER
 #include "camera_pins.h"
@@ -14,7 +18,7 @@
 const char *ssid = WIFI_SSID;
 const char *password = WIFI_PASS;
 
-#define ALARM_PIN 13 // Physical Crosswalk LED
+#define ALARM_PIN 12 // Moved from 13 to avoid HS2_DATA3 (SD Card) conflict
 #define FLASH_PIN 4
 
 httpd_handle_t stream_httpd = NULL;
@@ -53,12 +57,12 @@ bool check_auth(httpd_req_t *req) {
 
 esp_err_t index_handler(httpd_req_t *req) {
   if (!check_auth(req)) return ESP_OK;
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
   httpd_resp_set_type(req, "text/html");
   return httpd_resp_send(req, "<h1>ESP32-CAM Safety System Online</h1><p>Auth Status: Verified</p><p>Available endpoints: /stream, /status, /alarm</p>", -1);
 }
 
 esp_err_t favicon_handler(httpd_req_t *req) {
-  // Favicon doesn't strictly need auth to avoid cluttering logs, but we keep it silent
   httpd_resp_set_status(req, "204 No Content");
   return httpd_resp_send(req, NULL, 0);
 }
@@ -135,11 +139,17 @@ esp_err_t stream_handler(httpd_req_t *req) {
     if (res != ESP_OK) {
       break;
     }
+    
+    // Stability Optimization: Yield to TCP/IP stack
+    delay(1); 
   }
   return res;
 }
 
 void setup() {
+  // Power stability: Disable brownout detector
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+
   Serial.begin(115200);
   pinMode(ALARM_PIN, OUTPUT);
   digitalWrite(ALARM_PIN, LOW);
@@ -165,17 +175,14 @@ void setup() {
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
-  config.frame_size = FRAMESIZE_QVGA; // Lowered to 320x240 for stability
-  config.jpeg_quality = 15; // Higher compression to reduce ERR_EMPTY_RESPONSE
-  Serial.println("Initialzing ESP32-CAM Safety System...");
+  config.frame_size = FRAMESIZE_QVGA; 
+  config.jpeg_quality = 15; 
   
-  pinMode(ALARM_PIN, OUTPUT);
-  digitalWrite(ALARM_PIN, LOW); // LED OFF during init
+  Serial.println("Initialzing ESP32-CAM Safety System (Optimized)...");
 
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
     Serial.printf("Camera init failed with error 0x%x\n", err);
-    // If camera fails, blink the LED to signal hardware error
     while (true) {
       digitalWrite(ALARM_PIN, HIGH); delay(100);
       digitalWrite(ALARM_PIN, LOW); delay(100);
@@ -189,13 +196,9 @@ void setup() {
     delay(500);
     Serial.print(".");
   }
-  Serial.println("");
-  Serial.println("WiFi Connected!");
+  Serial.println("\nWiFi Connected!");
   Serial.print("IP Address: ");
   Serial.println(WiFi.localIP());
-
-  pinMode(ALARM_PIN, OUTPUT);
-  digitalWrite(ALARM_PIN, LOW);
 
   // Setup mDNS Discovery
   String hostname = "esp32-safety-" + String((uint32_t)ESP.getEfuseMac(), HEX);
@@ -207,28 +210,12 @@ void setup() {
   httpd_config_t http_config = HTTPD_DEFAULT_CONFIG();
   http_config.server_port = 80;
 
-  httpd_uri_t index_uri = {.uri = "/",
-                            .method = HTTP_GET,
-                            .handler = index_handler,
-                            .user_ctx = NULL};
-  httpd_uri_t favicon_uri = {.uri = "/favicon.ico",
-                             .method = HTTP_GET,
-                             .handler = favicon_handler,
-                             .user_ctx = NULL};
-  httpd_uri_t stream_uri = {.uri = "/stream",
-                            .method = HTTP_GET,
-                            .handler = stream_handler,
-                            .user_ctx = NULL};
-  httpd_uri_t status_uri = {.uri = "/status",
-                            .method = HTTP_GET,
-                            .handler = status_handler,
-                            .user_ctx = NULL};
-  httpd_uri_t alarm_uri = {.uri = "/alarm",
-                           .method = HTTP_GET,
-                           .handler = alarm_handler,
-                           .user_ctx = NULL};
+  httpd_uri_t index_uri = {.uri = "/", .method = HTTP_GET, .handler = index_handler, .user_ctx = NULL};
+  httpd_uri_t favicon_uri = {.uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_handler, .user_ctx = NULL};
+  httpd_uri_t stream_uri = {.uri = "/stream", .method = HTTP_GET, .handler = stream_handler, .user_ctx = NULL};
+  httpd_uri_t status_uri = {.uri = "/status", .method = HTTP_GET, .handler = status_handler, .user_ctx = NULL};
+  httpd_uri_t alarm_uri = {.uri = "/alarm", .method = HTTP_GET, .handler = alarm_handler, .user_ctx = NULL};
 
-  Serial.println("Starting web server on port: '80'");
   if (httpd_start(&stream_httpd, &http_config) == ESP_OK) {
     httpd_register_uri_handler(stream_httpd, &index_uri);
     httpd_register_uri_handler(stream_httpd, &favicon_uri);
@@ -239,4 +226,20 @@ void setup() {
   }
 }
 
-void loop() { delay(1000); }
+void loop() { 
+  // Resilience: Check WiFi connectivity and reconnect if necessary
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi connection lost. Reconnecting...");
+    WiFi.disconnect();
+    WiFi.begin(ssid, password);
+    unsigned long start_ms = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - start_ms < 15000) {
+      delay(500);
+      Serial.print(".");
+    }
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("\nWiFi Restored!");
+    }
+  }
+  delay(10000); 
+}
