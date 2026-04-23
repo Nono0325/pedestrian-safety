@@ -26,6 +26,7 @@ def load_config():
 
 config = load_config()
 API_KEY = config.get("security", {}).get("api_key", "")
+is_shutting_down = False
 
 app = FastAPI(title="先行一步 AI 監控儀表板")
 
@@ -132,7 +133,7 @@ async def fetch_camera_data(cam_id: int, ip: str):
     
     async def poll_status():
         async with httpx.AsyncClient() as client:
-            while True:
+            while not is_shutting_down:
                 start_time = asyncio.get_event_loop().time()
                 try:
                     resp = await client.get(status_url, timeout=3.0)
@@ -151,7 +152,7 @@ async def fetch_camera_data(cam_id: int, ip: str):
 
     async def poll_video():
         reconnect_delay = 5
-        while True:
+        while not is_shutting_down:
             cap = None
             try:
                 # 1. 第一步：先進行極細 TCP 探測 (自動處理 Port)
@@ -174,7 +175,7 @@ async def fetch_camera_data(cam_id: int, ip: str):
                     continue
 
                 first_frame = True
-                while await asyncio.to_thread(cap.isOpened):
+                while await asyncio.to_thread(cap.isOpened) and not is_shutting_down:
                     ret, frame = await asyncio.to_thread(cap.read)
                     if not ret: 
                         add_log(f"❌ [CAM {cam_id}] 串流訊號中斷", "ERROR")
@@ -216,11 +217,12 @@ from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global zc_instance
+    global zc_instance, is_shutting_down
     start_all_fetchers()
     zc_instance = start_mdns_discovery()
     yield
     # Shutdown
+    is_shutting_down = True
     add_log("🛑 系統正在關閉背景任務...", "WARN")
     if zc_instance:
         zc_instance.close()
@@ -372,10 +374,25 @@ if __name__ == "__main__":
     server = uvicorn.Server(uv_config)
 
     # 覆寫信號處理，避免顯示雜亂的 Traceback
+    shutdown_calls = 0
     def handle_exit(sig, frame):
-        print("\n\n[INFO] 偵測到中斷信號，正在優雅關閉系統...")
+        global shutdown_calls, is_shutting_down
+        shutdown_calls += 1
+        is_shutting_down = True
+        if shutdown_calls > 1:
+            print("\n[FORCE] 偵測到多次中斷，立即強制退出進程...")
+            os._exit(1)
+        
+        print("\n\n[INFO] 正在優雅關閉系統資源 (再按一次 Ctrl+C 可強制退出)...")
         # 建立一個 Task 來關閉 Server
-        asyncio.create_task(server.shutdown())
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(server.shutdown())
+            else:
+                os._exit(0)
+        except:
+            os._exit(0)
 
     signal.signal(signal.SIGINT, handle_exit)
     signal.signal(signal.SIGTERM, handle_exit)
