@@ -2,7 +2,7 @@
 
 # Configuration
 SSID="OneStepAhead_AP"
-PASSWORD="nono_safety_2026"
+PASSWORD="NonoSafety@2026"
 IP_ADDR="192.168.4.1/24"
 
 echo "=========================================="
