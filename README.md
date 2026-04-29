@@ -42,15 +42,15 @@
 
 ### A. Raspberry Pi 端 (處理中心)
 在您的 Raspberry Pi 終端機執行以下指令進行自動化安裝：
-`ash
+```bash
 curl -sSL https://raw.githubusercontent.com/Nono0325/pedestrian-safety/main/install.sh | bash
-`
+```
 安裝完成後執行：
-1. **啟動辨識主程式**: env/bin/python3 pi/main.py
-2. **啟動管理介面**: env/bin/python3 pi/dashboard.py (瀏覽器訪問：http://localhost:8000)
+1. **啟動辨識主程式**: `env/bin/python3 pi/main.py`
+2. **啟動管理介面**: `env/bin/python3 pi/dashboard.py` (瀏覽器訪問：http://localhost:8000)
 
 ### B. ESP32-CAM 端 (採集端)
-1. 使用 Arduino IDE 開啟 esp32/camera_stream.ino。
+1. 使用 Arduino IDE 開啟 `esp32/camera_stream.ino`。
 2. 修改程式碼中的 Wi-Fi SSID 與 Password。
 3. 開發板選擇 AI Thinker ESP32-CAM 並燒錄。
 4. **硬體接線**：將 LED 警示燈接在 **GPIO 12** (避開 SD 卡衝突)。
@@ -62,11 +62,11 @@ curl -sSL https://raw.githubusercontent.com/Nono0325/pedestrian-safety/main/inst
 為了方便現場演示，您可以直接執行以下腳本同時啟動 AI 辨識與管理介面：
 
 - **Linux / Raspberry Pi**:
-  `ash
+  ```bash
   chmod +x start.sh
   ./start.sh
-  `
-- **Windows**: 直接雙擊執行 start.bat 即可。
+  ```
+- **Windows**: 直接雙擊執行 `start.bat` 即可。
 
 ---
 
@@ -75,10 +75,10 @@ curl -sSL https://raw.githubusercontent.com/Nono0325/pedestrian-safety/main/inst
 為了在沒有路由器的環境下進行展示，本系統支援將 Raspberry Pi 設為 Wi-Fi 基地台：
 
 1. **執行設定腳本**:
-   `ash
+   ```bash
    sudo chmod +x pi/setup_ap.sh
    sudo ./pi/setup_ap.sh
-   `
+   ```
 2. **預設熱點資訊**:
    - **SSID**: OneStepAhead_AP
    - **Password**: NonoSafety@2026
@@ -90,19 +90,19 @@ curl -sSL https://raw.githubusercontent.com/Nono0325/pedestrian-safety/main/inst
 ## 🧪 模擬與測試 (Windows/Judge Testing)
 如果您在沒有實體硬體的情況下想要預覽功能：
 1. **環境配置**:
-   `powershell
+   ```powershell
    python -m venv venv
    .\venv\Scripts\activate
    pip install -r pi/requirements.txt
-   `
-2. **啟動模擬器**: python pi/mock_esp32.py
-3. **啟動管理介面**: python pi/dashboard.py
+   ```
+2. **啟動模擬器**: `python pi/mock_esp32.py`
+3. **啟動管理介面**: `python pi/dashboard.py`
 4. 訪問 http://localhost:8000 即可看到虛擬測試畫面與網路診斷數據。
 
 ---
 
 ## 📂 專案結構
-`	ext
+```text
 ├── docs/             # 專案文件與設計說明
 ├── esp32/            # ESP32-CAM 韌體源碼 (C++)
 ├── pi/
@@ -115,7 +115,7 @@ curl -sSL https://raw.githubusercontent.com/Nono0325/pedestrian-safety/main/inst
 ├── start.sh          # 一鍵啟動腳本 (Linux/Pi)
 ├── start.bat         # 一鍵啟動腳本 (Windows)
 └── README.md         # 專案說明文件
-`
+```
 
 ---
 
@@ -130,9 +130,9 @@ curl -sSL https://raw.githubusercontent.com/Nono0325/pedestrian-safety/main/inst
 
 本專案已實作基本的資安防護機制：
 
-1. **隱私保護**：Wi-Fi 與 API 金鑰存放在 esp32/secrets.h，已加入 .gitignore，請勿上傳至公開倉庫。
-2. **API 認證**：所有對 ESP32-CAM 的 HTTP 請求必須攜帶 uth 參數，範例：http://{IP}/stream?auth={KEY}
-3. **金鑰同步**：若要更改金鑰，請同時修改 esp32/secrets.h 與 pi/config.json 中的 pi_key 欄位。
+1. **隱私保護**：Wi-Fi 與 API 金鑰存放在 `esp32/secrets.h`，已加入 `.gitignore`，請勿上傳至公開倉庫。
+2. **API 認證**：所有對 ESP32-CAM 的 HTTP 請求必須攜帶 `auth` 參數，範例：`http://{IP}/stream?auth={KEY}`
+3. **金鑰同步**：若要更改金鑰，請同時修改 `esp32/secrets.h` 與 `pi/config.json` 中的 `api_key` 欄位。
 4. **CORS 安全**：後端已限制僅允許特定來源訪問。若需遠端管理，建議搭配 VPN 或 SSH Tunnel。
 
 ---
@@ -145,4 +145,4 @@ curl -sSL https://raw.githubusercontent.com/Nono0325/pedestrian-safety/main/inst
 2. **使用連線測試工具**：在「系統設定」頁中使用「連線測試 (TCP)」功能測試攝影機 IP。
 3. **mDNS 自動發現**：確保路由器沒有阻擋 mDNS 封包（設備名稱通常為 esp32-safety）。
 4. **硬體隔離 (AP Isolation)**：部分路由器的無線隔離功能會導致 Pi 無法連線 ESP32，請關閉此功能。
-5. **模擬器測試**：可先執行 python pi/mock_esp32.py 並新增 127.0.0.1:8080 作為攝影機進行測試。
+5. **模擬器測試**：可先執行 `python pi/mock_esp32.py` 並新增 `127.0.0.1:8080` 作為攝影機進行測試。
