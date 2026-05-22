@@ -46,8 +46,8 @@
 curl -sSL https://raw.githubusercontent.com/Nono0325/pedestrian-safety/main/install.sh | bash
 ```
 安裝完成後執行：
-1. **啟動辨識主程式**: `env/bin/python3 pi/main.py`
-2. **啟動管理介面**: `env/bin/python3 pi/dashboard.py` (瀏覽器訪問：http://localhost:8000)
+1. **啟動辨識主程式**: `venv/bin/python3 pi/main.py`
+2. **啟動管理介面**: `venv/bin/python3 pi/dashboard.py` (瀏覽器訪問：http://localhost:8000)
 
 ### B. ESP32-CAM 端 (採集端)
 1. 使用 Arduino IDE 開啟 `esp32/camera_stream.ino`。
