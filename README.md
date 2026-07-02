@@ -3,6 +3,7 @@
 [![Competition](https://img.shields.io/badge/Competition-115%E5%B9%B4%E4%BA%BA%E6%9C%AC%E7%92%B0%E5%A2%83%E5%85%A8%E5%9C%8B%E5%A4%A7%E5%B0%88%E9%99%A2%E6%A0%A1%E5%AD%B8%E7%94%9F%E7%AB%B6%E8%B3%BD-FFB300.svg)](https://example.com)
 [![Status](https://img.shields.io/badge/Status-Prototype_Ready-green.svg)]()
 [![Platform](https://img.shields.io/badge/Platform-Raspberry_Pi_5-C51A4A.svg)]()
+[![Benchmark](https://img.shields.io/badge/Benchmark-Pi5+Hailo--8L_Recommended-22c55e.svg)]()
 
 本專案致力於透過邊緣運算 (Edge AI) 技術提升路口行人安全。透過即時影像辨識行人動態，並在必要時觸發邊緣端的 LED 警示看板，降低人車衝突風險。
 
@@ -28,10 +29,62 @@
 
 ---
 
+## 📊 硬體效能模擬結果 (Benchmark Results)
+
+> 以下數據由 `pi_benchmark.py` 與 `stream4_benchmark.py` 對 **YOLOv8n @ imgsz=320 + ByteTrack** 進行模擬測試，
+> 基準為 x86 機器實測推論時間 (~25ms/幀)，套用各硬體縮放因子與熱節流模型得出。
+
+### 單路 ESP32-CAM 效能
+
+| 硬體平台 | 平均 FPS | 平均延遲 | 達標 (≥10fps) |
+| :--- | :---: | :---: | :---: |
+| Raspberry Pi 5 (CPU only) | **6.3 fps** | 158 ms | ❌ 不達標 |
+| Raspberry Pi 5 + ONNX INT8 | **10.0 fps** | 100 ms | ⚠️ 邊界達標 |
+| **Raspberry Pi 5 + Hailo-8L** | **~110 fps** | ~9 ms | ✅ 強力達標 |
+| Raspberry Pi 5 + Hailo-8 (26T) | **~220 fps** | ~4.5 ms | ✅ 強力達標 |
+| NVIDIA Jetson Orin Nano 4GB | **~50 fps** | ~20 ms | ✅ 達標 |
+| NVIDIA Jetson Orin NX 8GB | **~110 fps** | ~9 ms | ✅ 強力達標 |
+
+### 同時接收 4 路 ESP32-CAM（Round-Robin 並行模式）
+
+| 硬體平台 | 每路 FPS | 最少台數 | 總成本 (USD) | 建議 |
+| :--- | :---: | :---: | :---: | :--- |
+| Pi 5 CPU only | 1.8 fps | ❌ 4台仍不足 | $320 | 不建議 |
+| Pi 5 + ONNX INT8 | 2.8 fps | ⚠️ 4 台 (各跑1路) | $320 | 有限使用 |
+| **Pi 5 + Hailo-8L** ⭐ | **44.5 fps** | **1 台** | **$150** | **最佳性價比** |
+| Pi 5 + Hailo-8 (26T) | 89 fps | 1 台 | $210 | 多路擴展首選 |
+| Jetson Orin Nano | 21.8 fps | 1 台 | $199 | 開發生態完整 |
+| Jetson Orin NX 8GB | 49 fps | 1 台 | $399 | 8路+ 場景 |
+
+> **⭐ 競賽推薦方案**：**1 台 Raspberry Pi 5 (8GB) + Hailo-8L AI Kit**
+> - 總成本約 $150 USD (≈ NT$4,700)，官方套件開箱即用
+> - 4 路串流每路達 44.5 fps，餘裕高達 **4.45 倍**
+> - 功耗僅 8W，適合長時間戶外部署
+> - 需在 `config.txt` 啟用 PCIe Gen 3 模式以發揮最大效能
+
+### 執行效能模擬腳本
+
+```powershell
+# 安裝依賴
+pip install ultralytics psutil opencv-python numpy
+
+# 單路 Pi 5 效能模擬 (產生 HTML 報表)
+python pi_benchmark.py
+
+# 多硬體對比模擬
+python hardware_benchmark.py
+
+# 4路 ESP32-CAM 並行需求計算
+python stream4_benchmark.py
+```
+
+---
+
 ## 📋 零件清單 (Bill of Materials)
 | 硬體名稱 | 角色 | 建議規格 |
 | :--- | :--- | :--- |
-| **Raspberry Pi 5** | 核心運算與管理站 | 8GB RAM, 建議搭配散熱風扇 |
+| **Raspberry Pi 5** | 核心運算與管理站 | 8GB RAM，搭配主動散熱風扇 |
+| **Hailo-8L AI Kit** | NPU 推論加速 | 官方 M.2 HAT+，需啟用 PCIe Gen 3 |
 | **ESP32-CAM** | 邊緣影像與 LED 控制站 | AI-Thinker 模組 |
 | **LED 警示模組** | 行人警示顯示 | 5V/12V LED Strip (接 **GPIO 12**) |
 | **外殼/支架** | 硬體防護與固定 | 建議高度 3.5m - 5m |
@@ -103,18 +156,21 @@ curl -sSL https://raw.githubusercontent.com/Nono0325/pedestrian-safety/main/inst
 
 ## 📂 專案結構
 ```text
-├── docs/             # 專案文件與設計說明
-├── esp32/            # ESP32-CAM 韌體源碼 (C++)
+├── docs/                   # 專案文件與設計說明
+├── esp32/                  # ESP32-CAM 韌體源碼 (C++)
 ├── pi/
-│   ├── templates/    # Web 管理介面 UI (HTML/CSS)
-│   ├── main.py       # AI 辨識主核心
-│   ├── dashboard.py  # FastAPI 後端管理系統
-│   ├── mock_esp32.py # 軟體模擬器
-│   └── utils.py      # 通用工具函式
-├── install.sh        # 環境安裝腳本 (Linux)
-├── start.sh          # 一鍵啟動腳本 (Linux/Pi)
-├── start.bat         # 一鍵啟動腳本 (Windows)
-└── README.md         # 專案說明文件
+│   ├── templates/          # Web 管理介面 UI (HTML/CSS)
+│   ├── main.py             # AI 辨識主核心
+│   ├── dashboard.py        # FastAPI 後端管理系統
+│   ├── mock_esp32.py       # 軟體模擬器
+│   └── utils.py            # 通用工具函式
+├── pi_benchmark.py         # Pi 5 單路效能模擬腳本
+├── hardware_benchmark.py   # 多硬體效能對比腳本
+├── stream4_benchmark.py    # 4路 ESP32-CAM 並行需求計算
+├── install.sh              # 環境安裝腳本 (Linux)
+├── start.sh                # 一鍵啟動腳本 (Linux/Pi)
+├── start.bat               # 一鍵啟動腳本 (Windows)
+└── README.md               # 專案說明文件
 ```
 
 ---
