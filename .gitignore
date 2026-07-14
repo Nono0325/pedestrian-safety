@@ -19,10 +19,11 @@ Thumbs.db
 # ESP32 secrets (DO NOT COMMIT)
 esp32/secrets.h
 
-# Benchmark output HTML reports (generated files)
+# Benchmark output HTML reports (auto-generated files)
 pi5_benchmark_report.html
 hardware_comparison_report.html
 stream4_hardware_report.html
+docs/reports/
 
-# Utility scripts (dev only)
+# Utility / dev-only scripts
 check_encoding.py

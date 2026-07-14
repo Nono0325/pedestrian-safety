@@ -13,7 +13,7 @@
 - **AI 即時偵測**：使用 YOLOv8n + ByteTrack，結合 Homography 投影技術精準計算行人與路口的距離。
 - **邊緣端串流技術**：Raspberry Pi 5 作為核心處理站，同時管理多台 ESP32-CAM 影像採集節點。
 - **自動化警示**：辨識到行人進入危險區域時，自動遠端觸發 ESP32 上的 LED 警示燈。
-- **現代化管理介面**：基於 FastAPI 的 Web Dashboard，支援即時影像看版、參數設定與網路連線診斷。
+- **整合式管理介面**：基於 FastAPI 的 Web Dashboard，AI 推論與網頁服務整合為單一程式，支援即時 AI 標記影像串流、偵測人數統計、警報歷史圖表與網路連線診斷。
 - **低延遲優化**：採用非同步協程與多執行緒處理，確保影像延遲保持在 300ms 以下。
 
 ---
@@ -22,10 +22,32 @@
 | 領域 | 使用技術 |
 | :--- | :--- |
 | **AI & 影像辨識** | YOLOv8 (Ultralytics), ByteTrack (追蹤), OpenCV, Homography (透視變換) |
-| **後端架構** | Python 3.11+, FastAPI, Uvicorn, Zeroconf (mDNS 自動發現) |
+| **後端架構** | Python 3.11+, FastAPI, Uvicorn, Zeroconf (mDNS 自動發現), psutil |
 | **嵌入式開發** | C++, Arduino ESP32 Core, esp_http_server, mDNS Responder |
 | **前端介面** | HTML5, CSS3 (Glassmorphism), JavaScript (Async Fetch), Jinja2 |
 | **部署環境** | Linux Bash Shell, Python Virtual Environment (venv) |
+
+---
+
+## 🏗️ 系統架構
+
+```
+ESP32-CAM (x1~4)
+    │  MJPEG Stream (HTTP)
+    ▼
+Raspberry Pi 5
+┌─────────────────────────────────┐
+│  dashboard.py (單一啟動點)       │
+│  ┌────────────┐ ┌────────────┐  │
+│  │ AI Worker  │ │ FastAPI    │  │
+│  │ YOLOv8n   │ │ Web Server │  │
+│  │ Tracker   │ │ Port 8000  │  │
+│  └────────────┘ └────────────┘  │
+└─────────────────────────────────┘
+    │  瀏覽器訪問 http://Pi-IP:8000
+    ▼
+管理員 (手機 / 電腦瀏覽器)
+```
 
 ---
 
@@ -98,21 +120,23 @@ python stream4_benchmark.py
 ```bash
 curl -sSL https://raw.githubusercontent.com/Nono0325/pedestrian-safety/main/install.sh | bash
 ```
-安裝完成後執行：
-1. **啟動辨識主程式**: `venv/bin/python3 pi/main.py`
-2. **啟動管理介面**: `venv/bin/python3 pi/dashboard.py` (瀏覽器訪問：http://localhost:8000)
+安裝完成後，執行一鍵啟動腳本：
+```bash
+./start.sh
+```
+瀏覽器訪問 `http://<Pi-IP>:8000` 即可看到整合 AI 的管理介面。
+
+> **注意**：AI 辨識與 Web 儀表板已整合為單一程式 (`pi/dashboard.py`)，無需分開啟動。
 
 ### B. ESP32-CAM 端 (採集端)
 1. 使用 Arduino IDE 開啟 `esp32/camera_stream.ino`。
-2. 修改程式碼中的 Wi-Fi SSID 與 Password。
+2. 複製 `esp32/secrets.h.example` 為 `esp32/secrets.h`，填入 Wi-Fi 帳密與 API Key。
 3. 開發板選擇 AI Thinker ESP32-CAM 並燒錄。
 4. **硬體接線**：將 LED 警示燈接在 **GPIO 12** (避開 SD 卡衝突)。
 
 ---
 
 ## ⚡ 一鍵啟動 (One-Click Start)
-
-為了方便現場演示，您可以直接執行以下腳本同時啟動 AI 辨識與管理介面：
 
 - **Linux / Raspberry Pi**:
   ```bash
@@ -140,45 +164,66 @@ curl -sSL https://raw.githubusercontent.com/Nono0325/pedestrian-safety/main/inst
 
 ---
 
-## 🧪 模擬與測試 (Windows/Judge Testing)
+## 🧪 模擬與測試 (Windows / 無硬體測試)
 如果您在沒有實體硬體的情況下想要預覽功能：
+
 1. **環境配置**:
    ```powershell
    python -m venv venv
    .\venv\Scripts\activate
    pip install -r pi/requirements.txt
+   pip install ultralytics
    ```
-2. **啟動模擬器**: `python pi/mock_esp32.py`
-3. **啟動管理介面**: `python pi/dashboard.py`
-4. 訪問 http://localhost:8000 即可看到虛擬測試畫面與網路診斷數據。
+2. **啟動 ESP32 模擬器** (另開一個終端機):
+   ```powershell
+   python pi/mock_esp32.py
+   ```
+3. **啟動管理介面**:
+   ```powershell
+   python pi/dashboard.py
+   ```
+4. 訪問 `http://localhost:8000`，在「系統設定」中新增攝影機 IP：`127.0.0.1:8080`。
 
 ---
 
 ## 📂 專案結構
 ```text
-├── docs/                   # 專案文件與設計說明
-├── esp32/                  # ESP32-CAM 韌體源碼 (C++)
-├── pi/
-│   ├── templates/          # Web 管理介面 UI (HTML/CSS)
-│   ├── main.py             # AI 辨識主核心
-│   ├── dashboard.py        # FastAPI 後端管理系統
-│   ├── mock_esp32.py       # 軟體模擬器
-│   └── utils.py            # 通用工具函式
-├── pi_benchmark.py         # Pi 5 單路效能模擬腳本
-├── hardware_benchmark.py   # 多硬體效能對比腳本
-├── stream4_benchmark.py    # 4路 ESP32-CAM 並行需求計算
-├── install.sh              # 環境安裝腳本 (Linux)
-├── start.sh                # 一鍵啟動腳本 (Linux/Pi)
-├── start.bat               # 一鍵啟動腳本 (Windows)
-└── README.md               # 專案說明文件
+pedestrian-safety/
+├── docs/                       # 專案文件
+│   ├── proposal.md             # 計畫書
+│   └── reports/                # 效能模擬報表 (auto-generated, gitignored)
+├── esp32/                      # ESP32-CAM 韌體源碼 (C++)
+│   ├── camera_stream.ino       # 主韌體
+│   ├── camera_pins.h           # GPIO 腳位定義
+│   └── secrets.h               # Wi-Fi 與 API Key (gitignored, 請勿上傳)
+├── pi/                         # Raspberry Pi 端程式
+│   ├── templates/              # Web 管理介面 UI (HTML/CSS/JS)
+│   │   ├── index.html          # 主儀表板
+│   │   └── settings.html       # 設定頁
+│   ├── dashboard.py            # 核心程式：AI 辨識 + FastAPI Web 服務（整合版）
+│   ├── mock_esp32.py           # ESP32-CAM 軟體模擬器（開發測試用）
+│   ├── utils.py                # 通用工具函式（Homography 等）
+│   ├── config.json             # 系統設定（攝影機 IP、API Key 等）
+│   ├── requirements.txt        # Python 依賴套件清單
+│   └── setup_ap.sh             # Wi-Fi AP 模式設定腳本
+├── pi_benchmark.py             # Pi 5 單路效能模擬腳本
+├── hardware_benchmark.py       # 多硬體效能對比腳本
+├── stream4_benchmark.py        # 4路 ESP32-CAM 並行需求計算
+├── install.sh                  # 環境安裝腳本 (Linux/Pi)
+├── start.sh                    # 一鍵啟動腳本 (Linux/Pi)
+├── start.bat                   # 一鍵啟動腳本 (Windows)
+├── yolov8n.pt                  # YOLOv8n 模型權重 (gitignored)
+└── README.md                   # 專案說明文件
 ```
+
+> **注意**：`pi/main.py` 已整合至 `pi/dashboard.py`，單獨執行 `dashboard.py` 即可同時啟動 AI 推論與 Web 服務。
 
 ---
 
 ## 🎓 專案背景：本作品參加 **115年人本環境全國大專院校學生競賽**
 - **隊伍名稱**: nono-pi-4g
 - **參賽 ID**: 50915133
-- **開發時間**: 2026年4月
+- **開發時間**: 2026年4月 ~ 2026年7月
 
 ---
 
@@ -189,7 +234,6 @@ curl -sSL https://raw.githubusercontent.com/Nono0325/pedestrian-safety/main/inst
 1. **隱私保護**：Wi-Fi 與 API 金鑰存放在 `esp32/secrets.h`，已加入 `.gitignore`，請勿上傳至公開倉庫。
 2. **API 認證**：所有對 ESP32-CAM 的 HTTP 請求必須攜帶 `auth` 參數，範例：`http://{IP}/stream?auth={KEY}`
 3. **金鑰同步**：若要更改金鑰，請同時修改 `esp32/secrets.h` 與 `pi/config.json` 中的 `api_key` 欄位。
-4. **CORS 安全**：後端已限制僅允許特定來源訪問。若需遠端管理，建議搭配 VPN 或 SSH Tunnel。
 
 ---
 

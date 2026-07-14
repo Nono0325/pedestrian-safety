@@ -1,11 +1,38 @@
+# ===================================================
+# 先行一步 (One Step Ahead) — Pi 端依賴套件
+# ===================================================
+# 安裝方式（樹梅派 / Linux）：
+#   pip install -r pi/requirements.txt
+#
+# 注意：ultralytics 請單獨安裝以確保 CPU 版本：
+#   pip install ultralytics
+#
+# lgpio 為 Raspberry Pi GPIO 函式庫，僅 Pi 上需要，
+# Windows 測試環境可忽略此套件的安裝失敗。
+# ===================================================
+
+# 影像處理
 opencv-python
 numpy
-# ultralytics will be installed separately to force CPU version
+
+# AI 模型（請單獨安裝）
+# ultralytics
+
+# Raspberry Pi GPIO（僅 Pi 環境需要）
 lgpio
+
+# HTTP 客戶端
 requests
+httpx
+
+# Web 框架
 fastapi
 uvicorn
 jinja2
 python-multipart
+
+# 系統資源監控（CPU/RAM/Temperature）
+psutil
+
+# 網路服務發現
 zeroconf
-httpx

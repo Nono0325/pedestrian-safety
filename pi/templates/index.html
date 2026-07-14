@@ -217,6 +217,15 @@
       display: grid; grid-template-columns: 1fr 1fr 1fr 1fr;
       gap: 8px;
     }
+    .ai-badge {
+      position: absolute; bottom: 10px; left: 10px;
+      font-size: 10px; font-weight: 700; padding: 3px 8px;
+      border-radius: 4px; font-family: 'JetBrains Mono', monospace;
+      background: rgba(168,85,247,.15); color: var(--purple);
+      border: 1px solid rgba(168,85,247,.3);
+      display: none;
+    }
+    .ai-badge.visible { display: block; }
     .stat-box {
       background: var(--surface2);
       border: 1px solid var(--border);
@@ -363,7 +372,12 @@
   <div class="kpi-cell info">
     <div class="kpi-label">AI 推論 FPS</div>
     <div class="kpi-value" id="kpi-fps">--</div>
-    <div class="kpi-sub">YOLOv8n @ MOCK 節點</div>
+    <div class="kpi-sub">YOLOv8n 即時推論</div>
+  </div>
+  <div class="kpi-cell" style="--kpi-color:var(--purple)">
+    <div class="kpi-label">偵測人數</div>
+    <div class="kpi-value" id="kpi-persons" style="color:var(--purple)">0</div>
+    <div class="kpi-sub">全場域行人總數</div>
   </div>
   <div class="kpi-cell amber">
     <div class="kpi-label">今日警報</div>
@@ -401,6 +415,7 @@
           </div>
           <div class="cam-badge offline" id="badge-{{ cam.id }}">OFFLINE</div>
           <div class="cam-fps-badge" id="fps-badge-{{ cam.id }}">-- fps</div>
+          <div class="ai-badge" id="ai-count-badge-{{ cam.id }}">0 人</div>
           <button class="screenshot-btn" onclick="captureFrame({{ cam.id }}, '{{ cam.name }}')" title="截圖下載">
             📷 截圖
           </button>
@@ -427,8 +442,16 @@
               <div class="val" id="tcp-{{ cam.id }}" style="color:var(--muted)">--</div>
             </div>
             <div class="stat-box">
-              <div class="lbl">警示</div>
+              <div class="lbl">偵測人數</div>
+              <div class="val" id="ai-persons-{{ cam.id }}" style="color:var(--purple)">--</div>
+            </div>
+            <div class="stat-box" style="grid-column: span 2">
+              <div class="lbl">AI 警示</div>
               <div class="val" id="alarm-state-{{ cam.id }}" style="color:var(--muted)">靜止</div>
+            </div>
+            <div class="stat-box" style="grid-column: span 2">
+              <div class="lbl">AI 辨識</div>
+              <div class="val" id="ai-status-{{ cam.id }}" style="color:var(--info); font-size:11px">{% if ai_enabled %}啟用中{% else %}未安裝{% endif %}</div>
             </div>
           </div>
           <div style="margin-top:10px">
@@ -714,25 +737,73 @@ async function updateSysInfo() {
 setInterval(updateSysInfo, 8000);
 updateSysInfo();
 
-// ── 模擬系統資源（Windows 無法直接讀取，用模擬值展示 UI）──
-function updateResources() {
-  // 模擬值（實際部署在 Pi 上時可替換為 API 端點）
-  const cpu  = Math.round(15 + Math.random() * 30);
-  const ram  = Math.round(30 + Math.random() * 15);
-  const temp = Math.round(42 + Math.random() * 10);
-  const ping = Math.round(2 + Math.random() * 8);
+// ── 系統資源（從 /api/system_resources 取得真實數據）──
+async function updateResources() {
+  try {
+    const resp = await fetch('/api/system_resources');
+    const d = await resp.json();
+    const cpu  = d.available ? d.cpu  : Math.round(15 + Math.random() * 30);
+    const ram  = d.available ? d.ram  : Math.round(30 + Math.random() * 15);
+    const temp = d.available ? d.temp : Math.round(42 + Math.random() * 10);
 
-  document.getElementById('cpu-val').textContent = cpu + '%';
-  document.getElementById('ram-val').textContent = ram + '%';
-  document.getElementById('temp-val').textContent = temp + '°C';
-  document.getElementById('net-val').textContent = ping + ' ms';
-  document.getElementById('cpu-bar').style.width = cpu + '%';
-  document.getElementById('ram-bar').style.width = ram + '%';
-  document.getElementById('cpu-bar-val').textContent = cpu + '%';
-  document.getElementById('ram-bar-val').textContent = ram + '%';
+    document.getElementById('cpu-val').textContent = cpu + '%';
+    document.getElementById('ram-val').textContent = ram + '%';
+    document.getElementById('temp-val').textContent = temp > 0 ? temp + '°C' : '--°C';
+    document.getElementById('cpu-bar').style.width = Math.min(cpu, 100) + '%';
+    document.getElementById('ram-bar').style.width = Math.min(ram, 100) + '%';
+    document.getElementById('cpu-bar-val').textContent = cpu + '%';
+    document.getElementById('ram-bar-val').textContent = ram + '%';
+    // Pi 回應時間由 status 輪詢時順便計算
+  } catch(e) {
+    // fallback 模擬值
+    const cpu = Math.round(15 + Math.random() * 30);
+    const ram = Math.round(30 + Math.random() * 15);
+    document.getElementById('cpu-val').textContent = cpu + '%';
+    document.getElementById('ram-val').textContent = ram + '%';
+    document.getElementById('cpu-bar').style.width = cpu + '%';
+    document.getElementById('ram-bar').style.width = ram + '%';
+    document.getElementById('cpu-bar-val').textContent = cpu + '%';
+    document.getElementById('ram-bar-val').textContent = ram + '%';
+  }
 }
-setInterval(updateResources, 3000);
+setInterval(updateResources, 4000);
 updateResources();
+
+// ── AI 辨識狀態輪詢 ──
+let totalPersons = 0;
+async function updateAiStatus() {
+  try {
+    const resp = await fetch('/api/ai_status');
+    const data = await resp.json();
+    let total = 0;
+    data.forEach(cam => {
+      const count = cam.person_count || 0;
+      total += count;
+      // 更新攝影機卡片上的偵測人數
+      const persEl = document.getElementById('ai-persons-' + cam.id);
+      if (persEl) {
+        persEl.textContent = count;
+        persEl.style.color = count > 0 ? 'var(--purple)' : 'var(--muted)';
+      }
+      // 更新影像覆蓋的角標
+      const badge = document.getElementById('ai-count-badge-' + cam.id);
+      if (badge) {
+        badge.textContent = count + ' 人';
+        if (count > 0) badge.classList.add('visible');
+        else badge.classList.remove('visible');
+      }
+      // 更新 AI 狀態文字
+      const aiEl = document.getElementById('ai-status-' + cam.id);
+      if (aiEl && cam.ai_enabled) {
+        aiEl.textContent = count > 0 ? `偵測到 ${count} 人` : '監控中';
+        aiEl.style.color = count > 0 ? 'var(--purple)' : 'var(--info)';
+      }
+    });
+    document.getElementById('kpi-persons').textContent = total;
+  } catch(e) {}
+}
+setInterval(updateAiStatus, 2000);
+updateAiStatus();
 
 // ── 事件時間軸 ──
 async function updateTimeline() {
