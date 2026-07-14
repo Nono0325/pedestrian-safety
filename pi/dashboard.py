@@ -82,13 +82,13 @@ INTENT_MIN_FRAMES     = 4
 ALARM_DURATION        = 5      # 行人危險警報持續時間 (秒)
 CURB_Y_THRESHOLD      = 2.5
 
-# Thresholds — 車輛偵測（甲测點 34 讀取霧爾感應器電壓）
-VEHICLE_ALARM_DURATION  = 2.5  # PDF 說明：GPIO 閃爍警示行人 2.5 秒
-# 霧爾感應器觸發门滝（Volt）：
-#   GPIO34 退選（analogRead(34) * 3.3 / 4095）
-#   無車輛時展示背景磁場，具體门滝需現場校準
-HALL_VEHICLE_THRESHOLD  = 2.0  # 超過此電壓表示偵測到車輛磁場
-HALL_BASELINE_THRESHOLD = 0.5  # 低於此就是應是沒車磁場（或斷線）
+# Thresholds — 車輛偵測（GPIO34 讀取霍爾感應器電壓）
+VEHICLE_ALARM_DURATION  = 2.5  # 霍爾感測後警報持續秒數
+# 霍爾感應器觸發門檻（Volt）：
+#   ESP32 韌體：float sensor_val = analogRead(34) * (3.3 / 4095.0);
+#   無車時為背景磁場電壓，具體門檻需現場校準
+HALL_VEHICLE_THRESHOLD  = 2.0  # 超過此電壓代表偵測到車輛磁場
+HALL_BASELINE_THRESHOLD = 0.5  # 低於此電壓代表無車（或斷線）
 
 class HomographyTransformer:
     def __init__(self, src_pts, dst_pts):
@@ -101,43 +101,121 @@ class HomographyTransformer:
         return transformed[0], transformed[1]
 
 
-class PedestrianTracker:
-    def __init__(self, cam_id: int, alarm_url: str):
-        self.cam_id = cam_id
-        self.alarm_url = alarm_url
-        self.tracks: dict = {}
-        self.last_alarm_time: float = 0
-        self._alarm_lock: bool = False
+class DualTriggerAlarmController:
+    """
+    雙重觸發警示控制器（AND 邏輯）
 
-    def _send_alarm_request(self, state: str):
+    只有同時滿足以下兩個條件，才會觸發 LED 警示：
+      1. 霍爾感應器偵測到車輛（vehicle_present = True）
+      2. AI 鏡頭偵測到行人有危險意圖（pedestrian_danger = True）
+
+    任一條件解除，立即關閉警示。
+    """
+    def __init__(self, cam_id: int, alarm_url: str):
+        self.cam_id       = cam_id
+        self.alarm_url    = alarm_url
+        self._lock        = threading.Lock()
+        self._vehicle_present:   bool  = False  # 霍爾感測器狀態
+        self._pedestrian_danger: bool  = False  # AI 行人危險狀態
+        self._alarm_on:          bool  = False  # 目前 LED 是否已亮燈
+        self._vehicle_expires:   float = 0.0    # 車輛偵測到期時間
+
+    # ── 供外部呼叫的狀態更新接口 ──
+
+    def update_vehicle(self, present: bool, sensor_val: float = 0.0):
+        """由 poll_status 呼叫，更新霍爾感測器狀態"""
+        with self._lock:
+            was = self._vehicle_present
+            if present:
+                self._vehicle_present = True
+                self._vehicle_expires = time.time() + VEHICLE_ALARM_DURATION
+                if not was:
+                    add_log(f"[CAM {self.cam_id}] 霍爾感測：偵測到車輛 (sensor={sensor_val:.2f}V)", "WARN")
+            else:
+                # 保持 True 直到到期
+                if self._vehicle_expires > 0 and time.time() >= self._vehicle_expires:
+                    self._vehicle_present = False
+                    self._vehicle_expires = 0.0
+        self._evaluate()
+
+    def update_pedestrian(self, danger: bool):
+        """由 PedestrianTracker 呼叫，更新行人危險狀態"""
+        with self._lock:
+            self._pedestrian_danger = danger
+        self._evaluate()
+
+    # ── 內部評估邏輯 ──
+
+    def _evaluate(self):
+        """根據兩個條件決定是否送出 alarm 請求（不持鎖呼叫）"""
+        with self._lock:
+            should_alarm = self._vehicle_present and self._pedestrian_danger
+            if should_alarm and not self._alarm_on:
+                self._alarm_on = True
+                print(f">>> DUAL TRIGGER CAM{self.cam_id}: 車輛+危險行人 → Alarm ON")
+                add_log(f"[CAM {self.cam_id}] 雙重觸發：車輛 + 危險行人 → 警示 ON", "WARN")
+                threading.Thread(target=self._send_request, args=("on",), daemon=True).start()
+            elif not should_alarm and self._alarm_on:
+                self._alarm_on = False
+                print(f">>> DUAL TRIGGER CAM{self.cam_id}: 條件解除 → Alarm OFF")
+                add_log(f"[CAM {self.cam_id}] 條件解除 → 警示 OFF", "INFO")
+                threading.Thread(target=self._send_request, args=("off",), daemon=True).start()
+
+    def _send_request(self, state: str):
         try:
             import requests as req
             url = f"{self.alarm_url}?state={state}&auth={API_KEY}"
             req.get(url, timeout=1.5)
         except Exception as e:
             print(f"[ALARM CAM{self.cam_id}] 請求失敗: {e}")
-        finally:
-            self._alarm_lock = False
 
-    def trigger_alarm(self):
-        now = time.time()
-        if self._alarm_lock or (self.last_alarm_time > 0 and now - self.last_alarm_time < ALARM_DURATION):
-            return
-        print(f">>> AI TRIGGER CAM{self.cam_id}: Alarm ON")
-        self._alarm_lock = True
-        self.last_alarm_time = now
-        threading.Thread(target=self._send_alarm_request, args=("on",), daemon=True).start()
+    def tick(self):
+        """定期呼叫以處理霍爾感測器到期邏輯"""
+        with self._lock:
+            if self._vehicle_present and self._vehicle_expires > 0 and time.time() >= self._vehicle_expires:
+                self._vehicle_present = False
+                self._vehicle_expires = 0.0
+                add_log(f"[CAM {self.cam_id}] 霍爾感測：車輛離開（到期）", "INFO")
+        self._evaluate()
 
-    def reset_alarm_if_needed(self):
-        now = time.time()
-        if self.last_alarm_time > 0 and now - self.last_alarm_time >= ALARM_DURATION:
-            print(f">>> AI TRIGGER CAM{self.cam_id}: Alarm OFF")
-            self.last_alarm_time = 0
-            threading.Thread(target=self._send_alarm_request, args=("off",), daemon=True).start()
+    # ── 唯讀屬性 ──
 
     @property
     def alarm_active(self) -> bool:
-        return self.last_alarm_time > 0 and (time.time() - self.last_alarm_time < ALARM_DURATION)
+        return self._alarm_on
+
+    @property
+    def vehicle_present(self) -> bool:
+        return self._vehicle_present
+
+    @property
+    def pedestrian_danger(self) -> bool:
+        return self._pedestrian_danger
+
+
+class PedestrianTracker:
+    """
+    AI 行人意圖追蹤器 — 偵測到危險意圖時通知 DualTriggerAlarmController
+    """
+    def __init__(self, cam_id: int, controller: "DualTriggerAlarmController"):
+        self.cam_id     = cam_id
+        self.controller = controller
+        self.tracks: dict = {}
+        self._danger_active: bool = False
+
+    def reset_if_needed(self):
+        """定期呼叫，若超過警報持續時間則解除行人危險狀態"""
+        # 此邏輯現在由 update() 持續更新 controller，無需額外計時器
+        pass
+
+    # 保留舊名稱供外部相容呼叫
+    def reset_alarm_if_needed(self):
+        self.reset_if_needed()
+
+    @property
+    def alarm_active(self) -> bool:
+        """回傳 controller 整體警示狀態（向下相容）"""
+        return self.controller.alarm_active
 
     def cleanup_tracks(self):
         now = time.time()
@@ -145,7 +223,7 @@ class PedestrianTracker:
         for tid in expired:
             del self.tracks[tid]
 
-    def update(self, track_id, pos_ground):
+    def update(self, track_id, pos_ground) -> bool:
         now = time.time()
         if track_id not in self.tracks:
             self.tracks[track_id] = {'last_pos': pos_ground, 'last_time': now, 'intent_count': 0}
@@ -159,9 +237,9 @@ class PedestrianTracker:
         dy = pos_ground[1] - info['last_pos'][1]
         dist = np.sqrt(dx**2 + dy**2)
         velocity = dist / dt
-        vx, vy = dx / dt, dy / dt
+        vy = dy / dt
 
-        # is_approaching_curb
+        # 判斷是否朝路緣石方向移動
         approaching = False
         d_to_curb = abs(pos_ground[1] - CURB_Y_THRESHOLD)
         if pos_ground[1] < CURB_Y_THRESHOLD and vy > 0.2:
@@ -177,89 +255,24 @@ class PedestrianTracker:
 
         if info['intent_count'] >= INTENT_MIN_FRAMES:
             is_intent = True
-            self.trigger_alarm()
 
         info['last_pos'] = pos_ground
         info['last_time'] = now
         return is_intent
 
-
-class VehicleDetector:
-    """
-    霧爾感應器車輛偵測器 — 對應 PDF《前方來車請注意》核心功能
-
-    ESP32 韋體第 92 行：
-        float sensor_val = analogRead(34) * (3.3 / 4095.0);
-    讀取 GPIO34 的類比電壓，回傳於 /status 的 sensor 欄位。
-
-    霧爾感應器偵測原理：
-        - 車輛經過時磁場變動 → sensor 電壓升高超過 HALL_VEHICLE_THRESHOLD
-        - 無車時 sensor 處於背景電壓準位
-    """
-    def __init__(self, cam_id: int, alarm_url: str):
-        self.cam_id = cam_id
-        self.alarm_url = alarm_url
-        self.last_alarm_time: float = 0
-        self._alarm_lock: bool = False
-
-    def _send_alarm_request(self, state: str):
-        try:
-            import requests as req
-            url = f"{self.alarm_url}?state={state}&auth={API_KEY}"
-            req.get(url, timeout=1.5)
-        except Exception as e:
-            print(f"[VEHICLE ALARM CAM{self.cam_id}] 請求失敗: {e}")
-        finally:
-            self._alarm_lock = False
-
-    def check_hall_sensor(self, sensor_val: float) -> bool:
-        """
-        嘗試從霧爾感應器電壓判斷是否有車輛經過。
-        由 poll_status 循環呼叫。
-        回傳是否正在警報。
-        """
-        now = time.time()
-        vehicle_detected = sensor_val >= HALL_VEHICLE_THRESHOLD
-
-        if vehicle_detected:
-            # 車輛偵測到 → 在冷卻期外才重新觸發
-            if not self._alarm_lock and (
-                self.last_alarm_time == 0
-                or now - self.last_alarm_time >= VEHICLE_ALARM_DURATION
-            ):
-                print(f">>> HALL SENSOR CAM{self.cam_id}: Vehicle detected "
-                      f"(sensor={sensor_val:.2f}V >= {HALL_VEHICLE_THRESHOLD}V), Alarm ON ({VEHICLE_ALARM_DURATION}s)")
-                self._alarm_lock = True
-                self.last_alarm_time = now
-                threading.Thread(
-                    target=self._send_alarm_request, args=("on",), daemon=True
-                ).start()
-                add_log(f"[CAM {self.cam_id}] 霧爾偵測到車輛 (sensor={sensor_val:.2f}V)", "WARN")
-
-        # 到期自動關閉
-        if self.last_alarm_time > 0 and now - self.last_alarm_time >= VEHICLE_ALARM_DURATION:
-            if not self._alarm_lock:
-                self._alarm_lock = True
-                self.last_alarm_time = 0
-                threading.Thread(
-                    target=self._send_alarm_request, args=("off",), daemon=True
-                ).start()
-
-        return self.alarm_active
-
-    @property
-    def alarm_active(self) -> bool:
-        return self.last_alarm_time > 0 and (
-            time.time() - self.last_alarm_time < VEHICLE_ALARM_DURATION
-        )
+    def update_danger_state(self, any_danger: bool):
+        """將行人危險狀態同步給 controller"""
+        if any_danger != self._danger_active:
+            self._danger_active = any_danger
+            self.controller.update_pedestrian(any_danger)
 
 
 # ── 全域 AI 資源 ──
 _yolo_model    = None
 _yolo_lock     = threading.Lock()
 _transformer   = HomographyTransformer(SRC_PTS, DST_PTS)
-_trackers: dict[int, PedestrianTracker] = {}         # cam_id -> 行人 tracker
-_vehicle_detectors: dict[int, VehicleDetector] = {}  # cam_id -> 車輛偵測器
+_alarm_controllers: dict[int, DualTriggerAlarmController] = {}  # cam_id -> 雙重觸發控制器
+_trackers: dict[int, PedestrianTracker] = {}                    # cam_id -> 行人追蹤器
 _thread_pool   = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
 def get_yolo_model():
@@ -294,13 +307,15 @@ def _sync_ai_process(cam_id: int, jpg_bytes: bytes) -> bytes:
     if frame is None:
         return jpg_bytes
 
-    tracker = _trackers.get(cam_id)
-    if tracker is None:
+    tracker    = _trackers.get(cam_id)
+    controller = _alarm_controllers.get(cam_id)
+    if tracker is None or controller is None:
         return jpg_bytes
 
-    tracker.reset_alarm_if_needed()
+    # 定期 tick controller（處理霍爾感測器到期邏輯）
+    controller.tick()
 
-    # ── 偵測行人（YOLO）：車輛偵測由霧爾感應器負責，不在此處 ──
+    # ── 偵測行人（YOLO）；車輛由霍爾感應器負責 ──
     try:
         results = model.track(
             frame, persist=True, classes=[0],
@@ -311,6 +326,7 @@ def _sync_ai_process(cam_id: int, jpg_bytes: bytes) -> bytes:
         return jpg_bytes
 
     person_count = 0
+    any_danger   = False
 
     if results[0].boxes is not None and len(results[0].boxes) > 0:
         boxes_xyxy = results[0].boxes.xyxy.cpu().numpy()
@@ -323,9 +339,9 @@ def _sync_ai_process(cam_id: int, jpg_bytes: bytes) -> bytes:
 
         for box, cls_id, track_id in zip(boxes_xyxy, cls_ids, track_ids):
             if cls_id != 0:
-                continue  # 安全過濾，只處理行人
+                continue  # 只處理行人（class 0）
             x1, y1, x2, y2 = int(box[0]), int(box[1]), int(box[2]), int(box[3])
-            cx, cy = (x1 + x2) // 2, y2  # 腳部中心
+            cx, cy = (x1 + x2) // 2, y2  # 以腳部為地面定位點
             person_count += 1
 
             try:
@@ -333,6 +349,9 @@ def _sync_ai_process(cam_id: int, jpg_bytes: bytes) -> bytes:
                 is_danger = tracker.update(track_id, (gx, gy)) if track_id is not None else False
             except Exception:
                 is_danger = False
+
+            if is_danger:
+                any_danger = True
 
             # 顏色：紅=危險行人, 綠=安全行人
             color = (0, 0, 255) if is_danger else (0, 220, 80)
@@ -344,26 +363,42 @@ def _sync_ai_process(cam_id: int, jpg_bytes: bytes) -> bytes:
             cv2.putText(frame, label, (x1, y1 - 6),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
 
-    # ── 霧爾車輛警報狀態（從 ai_status_cache 讀取，由 poll_status 更新）──
-    vehicle_alarm = ai_status_cache.get(cam_id, {}).get("vehicle_alarm", 0) == 1
+    # 將行人危險狀態同步給 controller（AND 邏輯在 controller 內部執行）
+    tracker.update_danger_state(any_danger)
 
-    if vehicle_alarm:
-        cv2.rectangle(frame, (0, 0), (frame.shape[1], frame.shape[0]), (0, 0, 220), 4)
-        cv2.putText(frame, "!! VEHICLE ALERT - WARN PEDESTRIANS !!",
-                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 255), 2)
+    # ── 視覺標注：依據 controller 狀態繪製警示資訊 ──
+    vehicle_present   = controller.vehicle_present
+    pedestrian_danger = controller.pedestrian_danger
+    dual_alarm        = controller.alarm_active
 
-    if tracker.alarm_active:
-        cv2.putText(frame, "!! PEDESTRIAN DANGER !!",
-                    (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 80, 255), 2)
+    # 紅框：同時有車 + 危險行人（雙重觸發警示中）
+    if dual_alarm:
+        cv2.rectangle(frame, (0, 0), (frame.shape[1], frame.shape[0]), (0, 0, 220), 5)
+        cv2.putText(frame, "!! DUAL ALERT: VEHICLE + PEDESTRIAN !!",
+                    (8, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
-    # ── 更新 AI 狀態快取（保留 vehicle_alarm 不覆寫，由 poll_status 負責更新）──
+    # 橘框：只有車輛（等待行人狀態）
+    elif vehicle_present:
+        cv2.rectangle(frame, (0, 0), (frame.shape[1], frame.shape[0]), (0, 140, 255), 3)
+        cv2.putText(frame, "VEHICLE DETECTED - Monitoring pedestrians...",
+                    (8, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 140, 255), 2)
+
+    # 黃框：只有危險行人（等待車輛）
+    elif pedestrian_danger:
+        cv2.rectangle(frame, (0, 0), (frame.shape[1], frame.shape[0]), (0, 220, 255), 3)
+        cv2.putText(frame, "PEDESTRIAN DANGER - Waiting for vehicle...",
+                    (8, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 200, 255), 2)
+
+    # ── 更新 AI 狀態快取 ──
     prev = ai_status_cache.get(cam_id, {})
     ai_status_cache[cam_id] = {
-        "person_count":  person_count,
-        "vehicle_count": prev.get("vehicle_count", 0),   # 從霧爾感應器累計
-        "vehicle_alarm": prev.get("vehicle_alarm", 0),   # 由 poll_status 更新
-        "alarm":         1 if (tracker.alarm_active or vehicle_alarm) else 0,
-        "ai_enabled":    True,
+        "person_count":    person_count,
+        "vehicle_count":   prev.get("vehicle_count", 0),
+        "vehicle_present": 1 if vehicle_present else 0,
+        "vehicle_alarm":   1 if vehicle_present else 0,   # 相容舊欄位
+        "pedestrian_danger": 1 if pedestrian_danger else 0,
+        "alarm":           1 if dual_alarm else 0,
+        "ai_enabled":      True,
     }
 
     # 編碼回 JPEG
@@ -495,19 +530,21 @@ async def fetch_camera_data(cam_id: int, ip: str):
                         data["tcp"] = "OPEN"
                         status_cache[cam_id] = data
 
-                        # ── 霍爾感應器車輛偵測（PDF 核心：來車 → 警示行人）──
-                        # ESP32 固件：float sensor_val = analogRead(34) * (3.3 / 4095.0);
-                        sensor_val = data.get("sensor", 0.0)
-                        vd = _vehicle_detectors.get(cam_id)
-                        if vd:
-                            vehicle_alarm = vd.check_hall_sensor(sensor_val)
-                            # 同步更新 ai_status_cache 的車輛警報狀態
+                        # ── 霍爾感應器車輛偵測（AND 邏輯：來車 + 危險行人 才警示）──
+                        # ESP32 韌體：float sensor_val = analogRead(34) * (3.3 / 4095.0);
+                        sensor_val   = data.get("sensor", 0.0)
+                        controller   = _alarm_controllers.get(cam_id)
+                        if controller:
+                            vehicle_now = sensor_val >= HALL_VEHICLE_THRESHOLD
+                            controller.update_vehicle(vehicle_now, sensor_val)
+                            # 同步更新 ai_status_cache 車輛欄位
                             prev = ai_status_cache.get(cam_id, {})
                             ai_status_cache[cam_id] = {
                                 **prev,
-                                "vehicle_alarm": 1 if vehicle_alarm else 0,
-                                "vehicle_count": prev.get("vehicle_count", 0) + (1 if vehicle_alarm else 0),
-                                "alarm": 1 if (vehicle_alarm or prev.get("alarm", 0)) else 0,
+                                "vehicle_present": 1 if controller.vehicle_present else 0,
+                                "vehicle_alarm":   1 if controller.vehicle_present else 0,
+                                "vehicle_count":   prev.get("vehicle_count", 0) + (1 if vehicle_now else 0),
+                                "alarm":           1 if controller.alarm_active else 0,
                             }
                     else:
                         add_log(f"[CAM {cam_id}] 認證失敗: HTTP {resp.status_code}", "ERROR")
@@ -605,18 +642,24 @@ zc_instance  = None
 
 
 def setup_trackers():
-    """為每台攝影機建立獨立的 PedestrianTracker 與 VehicleDetector"""
+    """為每台攝影機建立 DualTriggerAlarmController 和 PedestrianTracker（AND 雙重觸發架構）"""
     for cam in config["cameras"]:
-        cam_id = cam["id"]
+        cam_id    = cam["id"]
         alarm_url = f"http://{cam['ip']}/alarm"
-        _trackers[cam_id] = PedestrianTracker(cam_id, alarm_url)
-        _vehicle_detectors[cam_id] = VehicleDetector(cam_id, alarm_url)
+        # 1. 建立雙重觸發控制器（統一管理 LED 警示決策）
+        controller = DualTriggerAlarmController(cam_id, alarm_url)
+        _alarm_controllers[cam_id] = controller
+        # 2. 建立行人追蹤器（注入 controller，不直接送警示）
+        _trackers[cam_id] = PedestrianTracker(cam_id, controller)
+        # 3. 初始化狀態快取
         ai_status_cache[cam_id] = {
-            "person_count":  0,
-            "vehicle_count": 0,
-            "vehicle_alarm": 0,
-            "alarm":         0,
-            "ai_enabled":    YOLO_AVAILABLE,
+            "person_count":    0,
+            "vehicle_count":   0,
+            "vehicle_present": 0,
+            "vehicle_alarm":   0,
+            "pedestrian_danger": 0,
+            "alarm":           0,
+            "ai_enabled":      YOLO_AVAILABLE,
         }
 
 
@@ -794,15 +837,18 @@ async def restart_fetchers():
 
 @app.get("/api/ai_status")
 async def get_ai_status():
-    """回傳每台攝影機的 AI 辨識狀態（人數、警報）"""
+    """回傳每台攝影機的 AI 辨識狀態（含霍爾感測器電壓）"""
     result = []
     for cam in config["cameras"]:
-        cam_id = cam["id"]
+        cam_id  = cam["id"]
         ai_info = ai_status_cache.get(cam_id, {"person_count": 0, "alarm": 0, "ai_enabled": YOLO_AVAILABLE})
+        # 從 status_cache 讀取霍爾感測器電壓（ESP32 /status 回傳的 sensor 欄位）
+        sensor_v = status_cache.get(cam_id, {}).get("sensor", None)
         result.append({
-            "id": cam_id,
+            "id":   cam_id,
             "name": cam["name"],
             **ai_info,
+            "sensor_voltage": round(sensor_v, 2) if sensor_v is not None else None,
         })
     return result
 

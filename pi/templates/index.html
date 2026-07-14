@@ -331,6 +331,49 @@
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
 
+    /* ══════════════ HALL SENSOR STATUS ══════════════ */
+    .hall-box {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px; padding: 8px 10px;
+      grid-column: span 4;
+      display: flex; align-items: center; gap: 10px;
+      transition: border-color .3s, background .3s;
+    }
+    .hall-box.vehicle-on {
+      background: rgba(245,158,11,.08);
+      border-color: rgba(245,158,11,.5);
+      animation: hall-pulse 1.2s infinite;
+    }
+    @keyframes hall-pulse {
+      0%,100% { box-shadow: 0 0 0 0 rgba(245,158,11,.25); }
+      50%      { box-shadow: 0 0 0 6px rgba(245,158,11,0); }
+    }
+    .hall-indicator {
+      width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px;
+      background: rgba(100,116,139,.15);
+      border: 2px solid var(--border);
+      transition: all .3s;
+    }
+    .hall-indicator.on {
+      background: rgba(245,158,11,.2);
+      border-color: var(--amber);
+      box-shadow: 0 0 10px rgba(245,158,11,.4);
+    }
+    .hall-info { flex: 1; min-width: 0; }
+    .hall-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing:.04em; }
+    .hall-state { font-size: 12px; font-weight: 600; font-family:'JetBrains Mono',monospace; margin-top: 2px; }
+    .hall-voltage { font-size: 10px; color: var(--muted); margin-top: 1px; font-family:'JetBrains Mono',monospace; }
+    .hall-dual-badge {
+      font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 4px;
+      background: rgba(239,68,68,.15); color: var(--red);
+      border: 1px solid rgba(239,68,68,.3);
+      display: none;
+    }
+    .hall-dual-badge.visible { display: block; }
+
     /* ══════════════ RESPONSIVE ══════════════ */
     @media (max-width: 960px) {
       .main { grid-template-columns: 1fr; }
@@ -452,6 +495,16 @@
             <div class="stat-box" style="grid-column: span 2">
               <div class="lbl">AI 辨識</div>
               <div class="val" id="ai-status-{{ cam.id }}" style="color:var(--info); font-size:11px">{% if ai_enabled %}啟用中{% else %}未安裝{% endif %}</div>
+            </div>
+            <!-- 霍爾感測器狀態列 -->
+            <div class="hall-box" id="hall-box-{{ cam.id }}">
+              <div class="hall-indicator" id="hall-led-{{ cam.id }}">&#x1f9f2;</div>
+              <div class="hall-info">
+                <div class="hall-label">霍爾感測器</div>
+                <div class="hall-state" id="hall-state-{{ cam.id }}" style="color:var(--muted)">請稽候...</div>
+                <div class="hall-voltage" id="hall-voltage-{{ cam.id }}">-- V</div>
+              </div>
+              <div class="hall-dual-badge" id="hall-dual-{{ cam.id }}">&#x26a0; 雙重觸發</div>
             </div>
           </div>
           <div style="margin-top:10px">
@@ -769,7 +822,7 @@ async function updateResources() {
 setInterval(updateResources, 4000);
 updateResources();
 
-// ── AI 辨識狀態輪詢 ──
+// ── AI 辨識狀態輪詢（含霍爾感測器狀態）──
 let totalPersons = 0;
 async function updateAiStatus() {
   try {
@@ -779,24 +832,63 @@ async function updateAiStatus() {
     data.forEach(cam => {
       const count = cam.person_count || 0;
       total += count;
-      // 更新攝影機卡片上的偵測人數
+
+      // 偵測人數
       const persEl = document.getElementById('ai-persons-' + cam.id);
       if (persEl) {
         persEl.textContent = count;
         persEl.style.color = count > 0 ? 'var(--purple)' : 'var(--muted)';
       }
-      // 更新影像覆蓋的角標
       const badge = document.getElementById('ai-count-badge-' + cam.id);
       if (badge) {
         badge.textContent = count + ' 人';
         if (count > 0) badge.classList.add('visible');
         else badge.classList.remove('visible');
       }
-      // 更新 AI 狀態文字
       const aiEl = document.getElementById('ai-status-' + cam.id);
       if (aiEl && cam.ai_enabled) {
         aiEl.textContent = count > 0 ? `偵測到 ${count} 人` : '監控中';
         aiEl.style.color = count > 0 ? 'var(--purple)' : 'var(--info)';
+      }
+
+      // ── 霍爾感測器狀態 ──
+      const hallBox     = document.getElementById('hall-box-'     + cam.id);
+      const hallLed     = document.getElementById('hall-led-'     + cam.id);
+      const hallState   = document.getElementById('hall-state-'   + cam.id);
+      const hallVoltage = document.getElementById('hall-voltage-' + cam.id);
+      const hallDual    = document.getElementById('hall-dual-'    + cam.id);
+      if (!hallBox) return;
+
+      const vehicleOn  = (cam.vehicle_present === 1 || cam.vehicle_alarm === 1);
+      const dualAlarm  = (cam.alarm === 1 && vehicleOn);
+      const pedDanger  = (cam.pedestrian_danger === 1);
+
+      // 顏色與標籤
+      if (vehicleOn) {
+        hallBox.classList.add('vehicle-on');
+        hallLed.classList.add('on');
+        hallLed.textContent = '🚗'; // 車輛圖示
+        hallState.textContent = '偵測到車輛';
+        hallState.style.color = 'var(--amber)';
+      } else {
+        hallBox.classList.remove('vehicle-on');
+        hallLed.classList.remove('on');
+        hallLed.textContent = '\u{1F9F2}'; // 磁鐵圖示
+        hallState.textContent = '無車輛經過';
+        hallState.style.color = 'var(--muted)';
+      }
+
+      // 電壓展示
+      const sensorV = cam.sensor_voltage;
+      if (sensorV !== undefined && sensorV !== null) {
+        hallVoltage.textContent = sensorV.toFixed(2) + ' V';
+      }
+
+      // 雙重觸發狀態證
+      if (dualAlarm) {
+        hallDual.classList.add('visible');
+      } else {
+        hallDual.classList.remove('visible');
       }
     });
     document.getElementById('kpi-persons').textContent = total;
