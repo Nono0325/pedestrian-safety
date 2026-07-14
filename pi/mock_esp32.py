@@ -12,7 +12,7 @@ mock_esp32.py — 軟體模擬 ESP32-CAM 節點
 
 設定說明：
   - 預設 Port：8080
-  - 預設 API Key：從 pi/config.json 讀取；若不存在則使用 "1230"
+  - 預設 API Key：從 pi/config.json 讀取；若不存在則使用 "nono_safety_sec_2026"
   - 在 dashboard 的「系統設定」中新增攝影機：IP 填 127.0.0.1:8080
 """
 
@@ -31,9 +31,9 @@ CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
 try:
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
         _cfg = json.load(f)
-    API_KEY = _cfg.get("security", {}).get("api_key", "1230")
+    API_KEY = _cfg.get("security", {}).get("api_key", "nono_safety_sec_2026")
 except Exception:
-    API_KEY = "1230"
+    API_KEY = "nono_safety_sec_2026"
 
 print(f"[MOCK] 使用 API Key: {API_KEY!r}")
 
