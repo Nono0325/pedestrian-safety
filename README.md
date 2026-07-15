@@ -147,7 +147,7 @@ python stream4_benchmark.py
 
 ### A. Raspberry Pi 端（處理中心）
 
-**方法一：自動化安裝腳本**
+**方法一：自動化安裝腳本（推薦）**
 ```bash
 curl -sSL https://raw.githubusercontent.com/Nono0325/pedestrian-safety/main/install.sh | bash
 ```
@@ -171,6 +171,24 @@ chmod +x start.sh
 瀏覽器訪問 `http://<Pi-IP>:8000` 即可看到整合 AI 的管理介面。
 
 > **注意**：AI 辨識與 Web 儀表板已整合為單一程式 `pi/dashboard.py`，無需分開啟動。
+
+### 🔄 更新到最新版（一鍵更新）
+
+若已安裝舊版，執行以下指令即可強制更新並重啟系統：
+
+```bash
+# 方式一：若已在專案目錄內
+bash update.sh
+
+# 方式二：從網路直接更新（不需要進入目錄）
+curl -sSL https://raw.githubusercontent.com/Nono0325/pedestrian-safety/main/update.sh | bash
+```
+
+`update.sh` 會自動：
+1. 停止舊版程式
+2. 從 GitHub 拉取最新程式碼
+3. 更新 Python 套件
+4. 啟動新版系統
 
 ---
 
